@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+    .glass-panel {
+        @apply bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10;
+    }
+}

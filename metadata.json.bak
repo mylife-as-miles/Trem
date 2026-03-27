@@ -1,0 +1,5 @@
+{
+  "name": "Trem AI Agent Hub",
+  "description": "A dark-themed dashboard for orchestrating video agents, featuring status monitoring, natural language command input, and real-time task tracking.",
+  "requestFramePermissions": []
+}
