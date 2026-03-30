@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { AwsClient } from 'aws4fetch';
 
 export { ProjectCoordinatorDO } from './durable-objects/project-coordinator';
 export { IngestionWorkflow } from './workflows/ingestion-workflow';
@@ -9,6 +10,12 @@ type Env = {
   BUCKET: R2Bucket;
   PROJECT_COORDINATOR: DurableObjectNamespace;
   INGESTION_WORKFLOW: any; // Workflow API
+
+  // R2 Credentials for AWS SDK (v4 signing)
+  R2_ACCESS_KEY_ID: string;
+  R2_SECRET_ACCESS_KEY: string;
+  R2_ACCOUNT_ID: string;
+  R2_BUCKET_NAME: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -72,8 +79,23 @@ app.post('/api/projects/:projectId/assets', async (c) => {
     "INSERT INTO assets (id, project_id, name, type, storage_key) VALUES (?, ?, ?, ?, ?)"
   ).bind(id, projectId, name, type, storageKey).run();
 
-  // Generate R2 presigned URL for upload
-  const uploadUrl = await createPresignedUrl(c.env.BUCKET, storageKey);
+  // Generate R2 presigned URL for upload via aws4fetch
+  const aws = new AwsClient({
+      accessKeyId: c.env.R2_ACCESS_KEY_ID || 'mock',
+      secretAccessKey: c.env.R2_SECRET_ACCESS_KEY || 'mock',
+      service: 's3',
+      region: 'auto',
+  });
+
+  const url = new URL(`https://${c.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${c.env.R2_BUCKET_NAME || 'trem-ai-assets'}/${storageKey}`);
+  url.searchParams.set('X-Amz-Expires', '3600'); // 1 hour
+
+  const signedRequest = await aws.sign(url, {
+      method: 'PUT',
+      aws: { signQuery: true }
+  });
+
+  const uploadUrl = signedRequest.url;
 
   const asset = await c.env.DB.prepare("SELECT * FROM assets WHERE id = ?").bind(id).first();
 
@@ -133,13 +155,5 @@ app.get('/api/projects/:projectId/ws', async (c) => {
   // Pass the WebSocket request to the Durable Object
   return stub.fetch(c.req.raw);
 });
-
-// Mock presigned URL generation (requires aws4fetch or similar in real CF worker)
-async function createPresignedUrl(bucket: R2Bucket, key: string) {
-  // In a real implementation, use aws4fetch to sign an S3 compatible URL for R2.
-  // For now we'll just return a mock URL assuming worker handles raw PUTs or similar,
-  // but R2 directly supports presigned URLs via AWS SDK or raw signing.
-  return `https://mock-upload-url.r2.cloudflarestorage.com/${key}?X-Amz-Signature=...`;
-}
 
 export default app;
