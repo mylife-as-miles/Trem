@@ -1,0 +1,19 @@
+{
+  "name": "trem-ai-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241224.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^3.101.0"
+  },
+  "dependencies": {
+    "@cloudflare/workflows": "^0.1.0",
+    "hono": "^4.6.14"
+  }
+}
