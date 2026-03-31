@@ -1,10 +1,11 @@
 import React from 'react';
 import TopNavigation from '../../components/layout/TopNavigation';
+import { RepoData } from '../../utils/db';
 import CreateComingSoonGate from './components/CreateComingSoonGate';
 
 interface TremCreateProps {
     onNavigate: (view: 'timeline' | 'dashboard' | 'repo' | 'diff' | 'assets' | 'settings' | 'create-repo' | 'trem-create' | 'trem-edit') => void;
-    onSelectRepo?: unknown;
+    onSelectRepo?: (repo: RepoData) => void;
 }
 
 const TremCreate: React.FC<TremCreateProps> = ({ onNavigate }) => {
