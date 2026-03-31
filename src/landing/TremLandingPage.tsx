@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { gsap } from 'gsap';
 import type { ViewType } from '../store/useTremStore';
 import { mountTremLandingScene } from './tremLandingScene';
 import './tremLandingPage.css';
@@ -10,35 +11,31 @@ interface TremLandingPageProps {
 const CAPABILITIES = [
     {
         name: 'Prompt-to-edit passes',
-        description: 'Describe the revision once and let Trem turn it into a structured edit plan.',
+        description: 'Turn a direction into a cut plan.',
         action: 'trem-edit' as const,
     },
     {
         name: 'Repository ingestion',
-        description: 'Turn raw footage, stills, and audio into a working source repository in one flow.',
+        description: 'Stage footage and references in one place.',
         action: 'create-repo' as const,
     },
     {
         name: 'Asset-first iteration',
-        description: 'Attach source media, notes, and references before Trem starts cutting.',
+        description: 'Pull media in before the first pass.',
         action: 'assets' as const,
-    },
-    {
-        name: 'Create from scratch',
-        description: 'Start with a fresh concept and move straight into Trem Create.',
-        action: 'trem-create' as const,
-    },
-    {
-        name: 'Review-ready timelines',
-        description: 'Move from direction to timeline decisions without losing repository context.',
-        action: 'trem-edit' as const,
     },
 ];
 
 const STATS = [
-    { value: '3', suffix: '', label: 'core workspaces across Edit, Create, and Assets' },
-    { value: '12', suffix: '+', label: 'motion and revision directions ready to launch' },
-    { value: '1', suffix: '', label: 'shared repo layer for footage, briefs, and output' },
+    { value: '3', suffix: '', label: 'core workspaces' },
+    { value: '12', suffix: '+', label: 'ready edit directions' },
+    { value: '1', suffix: '', label: 'shared repo layer' },
+];
+
+const FOOTER_ACTIONS = [
+    { label: 'Open Edit', meta: 'Prompt a revision', action: 'trem-edit' as const },
+    { label: 'Open Create', meta: 'Start from zero', action: 'trem-create' as const },
+    { label: 'Open Assets', meta: 'Review source media', action: 'assets' as const },
 ];
 
 const TremLandingPage: React.FC<TremLandingPageProps> = ({ onNavigate }) => {
@@ -72,18 +69,52 @@ const TremLandingPage: React.FC<TremLandingPageProps> = ({ onNavigate }) => {
             return;
         }
 
+        const ctx = gsap.context(() => {
+            gsap.to('.hero-discover', {
+                y: 10,
+                duration: 1.8,
+                repeat: -1,
+                yoyo: true,
+                ease: 'sine.inOut',
+            });
+
+            gsap.utils.toArray<HTMLElement>('.landing-surface-card--float').forEach((card, index) => {
+                gsap.to(card, {
+                    y: index % 2 === 0 ? -8 : 8,
+                    duration: 3.4 + index * 0.35,
+                    repeat: -1,
+                    yoyo: true,
+                    ease: 'sine.inOut',
+                });
+            });
+        }, pageRef);
+
+        const fadeNodes = Array.from(pageRef.current.querySelectorAll<HTMLElement>('.fade-up'));
+        fadeNodes.forEach((node) => {
+            gsap.set(node, { opacity: 0, y: 30 });
+        });
+
         const observer = new IntersectionObserver((entries) => {
             entries.forEach((entry) => {
-                if (entry.isIntersecting) {
-                    entry.target.classList.add('visible');
+                if (entry.isIntersecting && entry.target instanceof HTMLElement && !entry.target.dataset.revealed) {
+                    entry.target.dataset.revealed = 'true';
+                    gsap.to(entry.target, {
+                        opacity: 1,
+                        y: 0,
+                        duration: 0.9,
+                        ease: 'power3.out',
+                    });
+                    observer.unobserve(entry.target);
                 }
             });
         }, { threshold: 0.15 });
 
-        const fadeNodes = pageRef.current.querySelectorAll('.fade-up');
         fadeNodes.forEach((node) => observer.observe(node));
 
-        return () => observer.disconnect();
+        return () => {
+            observer.disconnect();
+            ctx.revert();
+        };
     }, []);
 
     return (
@@ -111,8 +142,8 @@ const TremLandingPage: React.FC<TremLandingPageProps> = ({ onNavigate }) => {
 
                 <ul className="nav-links">
                     <li><a href="#hero">Home</a></li>
-                    <li><a href="#stats">About</a></li>
-                    <li><a href="#services">Capabilities</a></li>
+                    <li><a href="#stats">Signal</a></li>
+                    <li><a href="#footer">Footer</a></li>
                 </ul>
 
                 <button
@@ -139,7 +170,7 @@ const TremLandingPage: React.FC<TremLandingPageProps> = ({ onNavigate }) => {
                         </button>
 
                         <p className="hero-desc fade-up">
-                            Trem is an AI editing partner for creators, studios, and social teams. Ingest footage, build source repositories, direct revisions in plain language, and keep every pass anchored to real assets.
+                            Ingest footage, brief the change, and move from direction to timeline without leaving Trem.
                         </p>
 
                         <div className="hero-avatars fade-up">
@@ -147,7 +178,18 @@ const TremLandingPage: React.FC<TremLandingPageProps> = ({ onNavigate }) => {
                             <div className="avatar">AU</div>
                             <div className="avatar">FX</div>
                             <div className="avatar">CAM</div>
-                            <span className="avatar-text">Built for editors, motion teams, and content studios.</span>
+                            <span className="avatar-text">For editorial, motion, and social teams.</span>
+                        </div>
+
+                        <div className="hero-surface-group fade-up">
+                            <div className="landing-surface-card landing-surface-card--float hero-surface-card">
+                                <span className="surface-kicker">Live Workspaces</span>
+                                <strong>Edit / Create / Assets</strong>
+                            </div>
+                            <div className="landing-surface-card landing-surface-card--float hero-surface-card">
+                                <span className="surface-kicker">Working Rhythm</span>
+                                <strong>Prompt. Review. Cut.</strong>
+                            </div>
                         </div>
                     </div>
 
@@ -164,52 +206,76 @@ const TremLandingPage: React.FC<TremLandingPageProps> = ({ onNavigate }) => {
                         <div className="stats-left" />
 
                         <div className="stats-right">
-                            <p className="quote fade-up">
-                                Most video AI tools understand prompts. Very few understand footage context, repository structure, and the way real edit notes evolve over time.
-                            </p>
+                            <div className="landing-surface-card stats-shell fade-up">
+                                <p className="quote">
+                                    Prompts matter. Context matters more.
+                                </p>
 
-                            <div className="stats-grid fade-up">
-                                {STATS.map((stat) => (
-                                    <div key={stat.label} className="stat-item">
-                                        <div className="stat-num">
-                                            {stat.value}
-                                            {stat.suffix && <sup>{stat.suffix}</sup>}
+                                <div className="stats-grid">
+                                    {STATS.map((stat) => (
+                                        <div key={stat.label} className="stat-item">
+                                            <div className="stat-num">
+                                                {stat.value}
+                                                {stat.suffix && <sup>{stat.suffix}</sup>}
+                                            </div>
+                                            <div className="stat-label">{stat.label}</div>
                                         </div>
-                                        <div className="stat-label">{stat.label}</div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
+
+                                <div className="capability-strip">
+                                    {CAPABILITIES.map((capability) => (
+                                        <button
+                                            key={capability.name}
+                                            type="button"
+                                            className="capability-chip"
+                                            onClick={() => onNavigate(capability.action)}
+                                        >
+                                            <span className="chip-dot" />
+                                            {capability.name}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     </div>
                 </section>
 
-                <section className="services-section" id="services">
-                    <div className="services-right">
-                        <p className="section-quote fade-up">Direction should feel creative. Execution should feel inevitable.</p>
-                        <p className="section-desc fade-up">
-                            Trem keeps the product loop tight: source media in one place, edit intent in one surface, and clean handoffs between creative planning, repository prep, and execution.
-                        </p>
+                <footer className="landing-footer" id="footer">
+                    <div className="landing-surface-card footer-shell fade-up">
+                        <div className="footer-lead">
+                            <span className="surface-kicker">Trem</span>
+                            <h2>Ready to cut?</h2>
+                            <p>Choose a surface and keep moving.</p>
+                        </div>
 
-                        <div className="service-list fade-up">
-                            {CAPABILITIES.map((capability) => (
+                        <div className="footer-actions">
+                            {FOOTER_ACTIONS.map((action) => (
                                 <button
-                                    key={capability.name}
+                                    key={action.label}
                                     type="button"
-                                    className="service-item"
-                                    onClick={() => onNavigate(capability.action)}
+                                    className="footer-action"
+                                    onClick={() => onNavigate(action.action)}
                                 >
-                                    <span className="svc-copy">
-                                        <span className="svc-name">{capability.name}</span>
-                                        <span className="svc-desc">{capability.description}</span>
-                                    </span>
-                                    <span className="svc-arrow">&gt;</span>
+                                    <span className="footer-action-title">{action.label}</span>
+                                    <span className="footer-action-meta">{action.meta}</span>
                                 </button>
                             ))}
                         </div>
-                    </div>
 
-                    <div className="services-left" />
-                </section>
+                        <div className="footer-bottom">
+                            <div className="footer-mark">
+                                <span className="footer-mark-icon">T</span>
+                                <span>Trem AI Agent Hub</span>
+                            </div>
+                            <div className="footer-links">
+                                <a href="#hero">Top</a>
+                                <a href="/trem-edit">Edit</a>
+                                <a href="/trem-create">Create</a>
+                            </div>
+                        </div>
+                    </div>
+                </footer>
             </div>
         </div>
     );
