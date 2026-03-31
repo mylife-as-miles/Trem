@@ -10,8 +10,9 @@ import CreateRepoView from './dashboard/create/RepoIngestionPage';
 import RepoFilesView from './dashboard/repo/RepoFilesPage';
 import ActivityLogsView from './dashboard/repo/ActivityLogsPage';
 import SettingsView from './dashboard/settings/SettingsPage';
+import TremLandingPage from './landing/TremLandingPage';
 
-import { db, RepoData } from './utils/db';
+import { RepoData } from './utils/db';
 import { useTremStore, ViewType } from './store/useTremStore';
 import { useRepo } from './hooks/useQueries';
 
@@ -48,7 +49,8 @@ const App: React.FC = () => {
         const handleRoute = async () => {
             const path = window.location.pathname;
 
-            if (path === '/timeline') setCurrentView('timeline');
+            if (path === '/') setCurrentView('landing');
+            else if (path === '/timeline') setCurrentView('timeline');
             else if (path === '/diff') setCurrentView('diff');
             else if (path === '/assets') setCurrentView('assets');
             else if (path === '/create-repo') setCurrentView('create-repo');
@@ -71,11 +73,16 @@ const App: React.FC = () => {
                     }
                 }
             } else {
-                // Default to trem-edit for / or /orchestrator or unknown
-                if (path !== '/' && path !== '/trem-edit' && path !== '/orchestrator') {
+                // Default to the landing page for unknown routes, but keep the old orchestrator alias.
+                if (path === '/orchestrator') {
                     window.history.replaceState({}, '', '/trem-edit');
+                    setCurrentView('trem-edit');
+                    return;
                 }
-                setCurrentView('trem-edit');
+                if (path !== '/') {
+                    window.history.replaceState({}, '', '/');
+                }
+                setCurrentView('landing');
             }
         };
 
@@ -90,6 +97,7 @@ const App: React.FC = () => {
         let url = '/trem-edit';
 
         switch (view) {
+            case 'landing': url = '/'; break;
             case 'timeline': url = '/timeline'; break;
             case 'diff': url = '/diff'; break;
             case 'assets': url = '/assets'; break;
@@ -149,6 +157,8 @@ const App: React.FC = () => {
 
     const renderView = () => {
         switch (currentView) {
+            case 'landing':
+                return <TremLandingPage onNavigate={handleNavigate} />;
             case 'dashboard':
             case 'trem-edit':
                 return <RemotionEditPage onNavigate={handleNavigate} onSelectRepo={handleSelectRepo} />;
@@ -174,6 +184,10 @@ const App: React.FC = () => {
                 return <RemotionEditPage onNavigate={handleNavigate} />;
         }
     };
+
+    if (currentView === 'landing') {
+        return renderView();
+    }
 
     return (
         <div className="flex h-screen bg-slate-50 dark:bg-background-dark text-slate-900 dark:text-white overflow-hidden selection:bg-primary selection:text-white font-sans">
