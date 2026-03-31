@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { interpretAgentCommand } from '../../services/gemini/edit/index';
 // Note: TopNavigation is now handled in the parent container
-import { db, RepoData, AssetData } from '../../utils/db';
+import { RepoData } from '../../utils/db';
 import AssetLibrary from '../assets/AssetLibraryPage';
 import { useTremStore } from '../../store/useTremStore';
 import { useRepos } from '../../hooks/useQueries';
@@ -170,11 +170,25 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
         repo.name.toLowerCase().includes(repoSearch.toLowerCase())
     );
 
-    const fallbackRepo = initialRepo || { name: 'Select Repo', brief: 'Choose a repository before you run an edit plan.', created: Date.now() } as RepoData;
+    const fallbackRepo: RepoData = initialRepo ?? {
+        name: 'Select Repo',
+        brief: 'Choose a repository before you run an edit plan.',
+        assets: [],
+        fileSystem: [],
+        created: Date.now(),
+    };
     const activeRepo = repos.find(r => r.id === selectedRepoId) || fallbackRepo;
     const activeMode = MSG_MODES.find(m => m.id === selectedModeId) || MSG_MODES[0];
     const primaryActionLabel = selectedModeId === 'interactive' ? 'Plan Changes' : 'Execute Edit';
     const statusLabel = isProcessing ? 'Processing request' : (selectedModeId === 'interactive' ? 'Planning mode' : 'Auto-execute mode');
+    const repoSummary = activeRepo.brief?.trim() || 'Choose a repository to load its creative brief and existing source context.';
+    const repoAssetCount = Array.isArray(activeRepo.assets) ? activeRepo.assets.length : 0;
+    const repoCreatedLabel = new Date(activeRepo.created).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+    const selectedAssetPreview = selectedAssetIds.slice(0, 4);
 
     return (
         <div className="relative flex min-h-full flex-col fade-in bg-slate-50/50 font-sans dark:bg-background-dark">
