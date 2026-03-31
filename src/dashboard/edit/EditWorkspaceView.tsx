@@ -260,7 +260,7 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                                     </p>
                                 </div>
                                 <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
-                                    {repos.length} repos available
+                                    {isLoadingRepos ? 'Loading repos' : `${repos.length} repos available`}
                                 </div>
                             </div>
 
@@ -356,7 +356,7 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                                                 }`}
                                         >
                                             <span className="material-icons-outlined text-lg">folder_open</span>
-                                            <span className="max-w-[150px] truncate">{activeRepo.name}</span>
+                                            <span className="max-w-[150px] truncate">{isLoadingRepos ? 'Loading repos...' : activeRepo.name}</span>
                                             <span className="material-icons-outlined text-xs opacity-50">expand_more</span>
                                         </button>
 
@@ -490,25 +490,114 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                         )}
                     </div>
 
-                    {/* Quick Suggestions */}
-                    <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5 dark:border-border-dark dark:bg-background-dark/45">
-                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Quick Prompts</h3>
-                        <p className="mt-2 text-sm text-slate-500 dark:text-gray-400">
-                            Start with a concrete move, then refine once the plan is on the page.
-                        </p>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                        {SUGGESTIONS.slice(0, 3).map((sugg, i) => (
-                            <button
-                                key={i}
-                                onClick={() => setPrompt(sugg)}
-                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-slate-900 dark:border-border-dark dark:bg-surface-card dark:text-slate-400 dark:hover:text-white"
-                            >
-                                {sugg}
-                            </button>
-                        ))}
-                        </div>
-                    </div>
+                                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5 dark:border-border-dark dark:bg-background-dark/45">
+                                    <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Quick Prompts</h3>
+                                    <p className="mt-2 text-sm text-slate-500 dark:text-gray-400">
+                                        Start with a concrete move, then refine once the plan is on the page.
+                                    </p>
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                        {SUGGESTIONS.slice(0, 4).map((sugg, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => setPrompt(sugg)}
+                                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-slate-900 dark:border-border-dark dark:bg-surface-card dark:text-slate-400 dark:hover:text-white"
+                                            >
+                                                {sugg}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
 
+                            <aside className="space-y-4">
+                                <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-border-dark dark:bg-background-dark/55">
+                                    <div className="flex items-start gap-3">
+                                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                                            <span className="material-icons-outlined text-lg">folder_open</span>
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">Selected Repo</div>
+                                            <h3 className="mt-2 text-lg font-display font-bold tracking-tight text-slate-900 dark:text-white">{activeRepo.name}</h3>
+                                            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">{repoSummary}</p>
+                                        </div>
+                                    </div>
+                                    <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3 dark:border-border-dark dark:bg-surface-card/65">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">Assets in Repo</div>
+                                            <div className="mt-2 text-xl font-display font-bold text-slate-900 dark:text-white">{repoAssetCount}</div>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3 dark:border-border-dark dark:bg-surface-card/65">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">Created</div>
+                                            <div className="mt-2 text-sm font-medium text-slate-700 dark:text-gray-200">{repoCreatedLabel}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-border-dark dark:bg-background-dark/55">
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                                            <span className="material-icons-outlined text-lg">{activeMode.icon}</span>
+                                        </div>
+                                        <div>
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">Execution Mode</div>
+                                            <div className="mt-1 text-base font-display font-bold text-slate-900 dark:text-white">{activeMode.label}</div>
+                                        </div>
+                                    </div>
+                                    <p className="mt-4 text-sm leading-6 text-slate-500 dark:text-gray-400">{activeMode.description}</p>
+                                    <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-primary">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                        {primaryActionLabel}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm dark:border-border-dark dark:bg-background-dark/55">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">Attached Assets</div>
+                                            <div className="mt-1 text-base font-display font-bold text-slate-900 dark:text-white">{selectedAssetIds.length} selected</div>
+                                        </div>
+                                        <button
+                                            onClick={() => setShowAssetLibrary(true)}
+                                            className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary transition-colors hover:bg-primary/15"
+                                        >
+                                            <span className="material-icons-outlined text-lg">add</span>
+                                        </button>
+                                    </div>
+
+                                    {selectedAssetIds.length > 0 ? (
+                                        <div className="mt-4 flex flex-wrap gap-2">
+                                            {selectedAssetPreview.map((id) => (
+                                                <div
+                                                    key={id}
+                                                    className="rounded-full border border-slate-200 bg-slate-50/80 px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card/65 dark:text-gray-300"
+                                                >
+                                                    {id.slice(0, 8)}
+                                                </div>
+                                            ))}
+                                            {selectedAssetIds.length > selectedAssetPreview.length && (
+                                                <div className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+                                                    +{selectedAssetIds.length - selectedAssetPreview.length} more
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <p className="mt-4 text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                            Open the asset library to attach the footage, stills, or audio that should influence this edit pass.
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-primary/10 via-white to-white p-5 shadow-sm dark:border-border-dark dark:from-primary/10 dark:via-surface-card dark:to-background-dark">
+                                    <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">Planning Tips</div>
+                                    <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600 dark:text-gray-300">
+                                        <li>Call out timing, pacing, or reference moments if the edit needs precision.</li>
+                                        <li>Name any transitions, captions, zooms, or cleanup work you expect Trem to handle.</li>
+                                        <li>Use planning mode if you want to review the shot logic before execution.</li>
+                                    </ul>
+                                </div>
+                            </aside>
+                        </div>
+                    </section>
                 </div>
             </div>
 
