@@ -12,6 +12,27 @@ interface CreateRepoViewProps {
     initialJobId?: string;
 }
 
+const formatFileSize = (bytes: number) => {
+    if (!bytes) return '0 B';
+
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+    }
+
+    return `${size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const getFileIcon = (type: string) => {
+    if (type.startsWith('video')) return 'movie';
+    if (type.startsWith('audio')) return 'audiotrack';
+    return 'image';
+};
+
 export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, initialJobId }) => {
     // Current Step: 'details' -> 'uploading' -> 'ingest' -> 'completed'
     const [step, setStep] = useState<'details' | 'uploading' | 'ingest' | 'completed'>('details');
@@ -120,6 +141,43 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     };
 
     const stats = getStats();
+    const totalSelectedSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+    const selectedVideoCount = selectedFiles.filter((file) => file.type.startsWith('video')).length;
+    const selectedAudioCount = selectedFiles.filter((file) => file.type.startsWith('audio')).length;
+    const selectedImageCount = selectedFiles.filter((file) => file.type.startsWith('image')).length;
+    const currentProgress = step === 'uploading'
+        ? uploadProgress
+        : (projectPayload?.liveProgress || projectPayload?.activeJob?.progress || 0);
+    const currentWorkflowLabel = step === 'details'
+        ? 'Ready to stage'
+        : step === 'uploading'
+            ? 'Uploading media'
+            : step === 'ingest'
+                ? (projectPayload?.activeJob?.status || 'processing')
+                : 'Commit ready';
+    const journeySteps = [
+        {
+            key: 'details',
+            label: 'Define',
+            description: 'Name the repository and frame the brief.',
+            active: step === 'details',
+            complete: step !== 'details',
+        },
+        {
+            key: 'ingest',
+            label: 'Ingest',
+            description: 'Upload source media and run the workflow.',
+            active: step === 'uploading' || step === 'ingest',
+            complete: step === 'completed',
+        },
+        {
+            key: 'completed',
+            label: 'Commit',
+            description: 'Review artifacts and move into the workspace.',
+            active: step === 'completed',
+            complete: false,
+        },
+    ];
     
     // Construct simulation logs from actual DB logs
     const simLogs = projectPayload?.logs?.map((l: any) => `[${new Date(l.created_at || Date.now()).toLocaleTimeString()}] ${l.message}`) || [];
