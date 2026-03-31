@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, AssetData } from '../../utils/db';
 import TopNavigation from '../../components/layout/TopNavigation';
+import AlertDialog from '../../components/ui/AlertDialog';
 
 interface AssetLibraryProps {
     isModal?: boolean;
@@ -40,6 +41,7 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
     const [selectedAssets, setSelectedAssets] = useState<string[]>([]);
     const [assets, setAssets] = useState<AssetData[]>([]);
     const [isDragging, setIsDragging] = useState(false);
+    const [deleteAssetId, setDeleteAssetId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Load assets from DB
@@ -447,11 +449,7 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                if (window.confirm('Delete this asset permanently?')) {
-                                                    db.deleteAsset(asset.id).then(() => {
-                                                        loadAssets();
-                                                    });
-                                                }
+                                                if (asset.id) { setDeleteAssetId(asset.id); }
                                             }}
                                             className="w-8 h-8 rounded-full bg-black/60 hover:bg-red-500/80 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white transition-all shadow-lg"
                                             title="Delete Asset"
@@ -532,7 +530,25 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                         </div>
                     </div>
                 </div>
-            </main>
+            
+            <AlertDialog
+                isOpen={!!deleteAssetId}
+                title="Delete Asset"
+                description="Are you sure you want to delete this asset? This action cannot be undone."
+                confirmText="Delete"
+                cancelText="Cancel"
+                type="danger"
+                onConfirm={() => {
+                    if (deleteAssetId) {
+                        db.deleteAsset(deleteAssetId).then(() => {
+                            loadAssets();
+                            setDeleteAssetId(null);
+                        });
+                    }
+                }}
+                onCancel={() => setDeleteAssetId(null)}
+            />
+</main>
         </div>
     );
 };

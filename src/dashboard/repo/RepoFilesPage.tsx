@@ -35,6 +35,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
     const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
     const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
     const [newItemName, setNewItemName] = useState('');
+    const [unsavedChangesDialog, setUnsavedChangesDialog] = useState<FileNode | null>(null);
 
     // AI & Terminal States
     const [isProcessing, setIsProcessing] = useState(false);
@@ -302,7 +303,10 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                                 if (target) target.isOpen = !target.isOpen;
                                 setFiles(newFiles);
                             } else {
-                                if (isDirty && !window.confirm("Unsaved changes.")) return;
+                                if (isDirty) {
+                                    setUnsavedChangesDialog(node);
+                                    return;
+                                }
                                 setSelectedFile(node);
                                 setEditorContent(node.content || '');
                                 setIsDirty(false);
@@ -508,6 +512,24 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                     </div>
                 </div>
             )}
+        
+            <AlertDialog
+                isOpen={!!unsavedChangesDialog}
+                title="Unsaved Changes"
+                description="You have unsaved changes in the current file. Are you sure you want to discard them and open another file?"
+                confirmText="Discard Changes"
+                cancelText="Cancel"
+                type="danger"
+                onConfirm={() => {
+                    if (unsavedChangesDialog) {
+                        setSelectedFile(unsavedChangesDialog);
+                        setEditorContent(unsavedChangesDialog.content || '');
+                        setIsDirty(false);
+                        setUnsavedChangesDialog(null);
+                    }
+                }}
+                onCancel={() => setUnsavedChangesDialog(null)}
+            />
         </div>
     );
 };

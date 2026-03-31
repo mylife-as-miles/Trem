@@ -2,9 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { db, RepoData, PendingRepoData } from '../../utils/db';
 import { useTremStore } from '../../store/useTremStore';
 import { useRepos, useProjects, useDeleteRepo, useDeleteCFProject } from '../../hooks/useQueries';
+import AlertDialog from '../ui/AlertDialog';
 
 // Cloudflare Native Active Jobs
-const ActiveJobsList: React.FC<{ isCollapsed: boolean; onNavigate: any, projects: any[], onDelete: (e: React.MouseEvent, id: string) => void }> = ({ isCollapsed, onNavigate, projects, onDelete }) => {
+const ActiveJobsList: React.FC<{ 
+  isCollapsed: boolean; 
+  onNavigate: any; 
+  projects: any[]; 
+  onDeleteRequest: (id: string, name: string) => void 
+}> = ({ isCollapsed, onNavigate, projects, onDeleteRequest }) => {
   // Filter for projects that have an active job or are not completed
   const activeProjects = projects.filter(p => p.status !== 'completed' && p.status !== 'failed');
 
@@ -13,7 +19,7 @@ const ActiveJobsList: React.FC<{ isCollapsed: boolean; onNavigate: any, projects
   return (
     <ul className="space-y-1 mb-2">
       {activeProjects.map(project => (
-        <li key={project.id} className="group">
+        <li key={project.id} className="group px-1">
           <div
             className={`w-full flex items-center gap-1 px-2 py-2 text-sm rounded-md bg-primary/10 text-primary font-medium border border-primary/20 ${isCollapsed ? 'justify-center' : ''}`}
           >
@@ -27,11 +33,14 @@ const ActiveJobsList: React.FC<{ isCollapsed: boolean; onNavigate: any, projects
             </button>
             {!isCollapsed && (
               <button
-                onClick={(e) => onDelete(e, project.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteRequest(project.id, project.name);
+                }}
                 className="opacity-0 group-hover:opacity-100 p-1 text-primary/60 hover:text-red-500 transition-all flex-shrink-0"
                 title="Delete/Cancel Process"
               >
-                <span className="material-icons-outlined text-sm">delete</span>
+                <span className="material-icons-outlined text-sm pointer-events-none">delete</span>
               </button>
             )}
           </div>
@@ -52,6 +61,19 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
   const [isCollapsed, setIsCollapsed] = useState(false);
   const repoData = useTremStore((state) => state.repoData);
   
+  // Deletion State
+  const [deleteDialog, setDeleteDialog] = useState<{
+    isOpen: boolean;
+    id: string | number | null;
+    name: string;
+    type: 'legacy' | 'cf';
+  }>({
+    isOpen: false,
+    id: null,
+    name: '',
+    type: 'cf'
+  });
+
   // Fetch both IndexedDB repos (legacy) and Cloudflare Projects
   const { data: legacyRepos = [] } = useRepos();
   const { data: cfProjects = [] } = useProjects();
@@ -65,23 +87,27 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
     onNavigate('repo');
   };
 
-  const handleDeleteLegacy = async (e: React.MouseEvent, id: number) => {
-    e.stopPropagation();
-    if (window.confirm('Are you sure you want to delete this repository?')) {
-      await deleteRepo.mutateAsync(id);
-      if (repoData?.id && String(repoData.id) === String(id)) {
-        onNavigate('trem-edit');
-      }
-    }
-  };
+  const confirmDelete = async () => {
+    const { id, type } = deleteDialog;
+    if (!id) return;
 
-  const handleDeleteCF = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    if (window.confirm('Are you sure you want to delete this project?')) {
-      await deleteCFProject.mutateAsync(id);
+    try {
+      if (type === 'legacy') {
+        await deleteRepo.mutateAsync(id as number);
+      } else {
+        await deleteCFProject.mutateAsync(id as string);
+      }
+
+      // If we deleted the active project, move to high-level view
       if (repoData?.id && String(repoData.id) === String(id)) {
         onNavigate('trem-edit');
+      } else if (type === 'cf' && window.location.pathname.includes(`/create-repo/${id}`)) {
+        onNavigate('trem-edit');
       }
+    } catch (err) {
+      console.error('Delete failed:', err);
+    } finally {
+      setDeleteDialog(prev => ({ ...prev, isOpen: false }));
     }
   };
 
@@ -140,7 +166,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
             {!isCollapsed && cfProjects.some((p: any) => p.status !== 'completed' && p.status !== 'failed') && (
               <h3 className="px-2 text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-gray-500 mb-2 mt-2 font-bold">Active Processing</h3>
             )}
-            <ActiveJobsList isCollapsed={isCollapsed} onNavigate={onNavigate} projects={cfProjects} onDelete={handleDeleteCF} />
+            <ActiveJobsList 
+              isCollapsed={isCollapsed} 
+              onNavigate={onNavigate} 
+              projects={cfProjects} 
+              onDeleteRequest={(id, name) => setDeleteDialog({ isOpen: true, id, name, type: 'cf' })} 
+            />
           </div>
 
           {/* Video Repos */}
@@ -155,7 +186,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
               
               {/* Cloudflare Projects */}
               {cfProjects.filter((p: any) => p.status === 'completed' || p.status === 'failed').map((project: any) => (
-                <li key={`cf-${project.id}`} className="group">
+                <li key={`cf-${project.id}`} className="group px-1">
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleRepoClick({ id: project.id, name: project.name, brief: project.brief, created: new Date(project.created_at).getTime() })}
@@ -174,7 +205,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
                     </button>
                     {!isCollapsed && (
                       <button
-                        onClick={(e) => handleDeleteCF(e, project.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteDialog({ isOpen: true, id: project.id, name: project.name, type: 'cf' });
+                        }}
                         className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 transition-all flex-shrink-0"
                         title="Delete Project"
                       >
@@ -187,7 +221,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
               
               {/* Legacy IndexedDB Repositories */}
               {legacyRepos.map((repo) => (
-                <li key={repo.id} className="group">
+                <li key={repo.id} className="group px-1">
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleRepoClick(repo)}
@@ -206,7 +240,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
                     </button>
                     {!isCollapsed && (
                       <button
-                        onClick={(e) => handleDeleteLegacy(e, repo.id!)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteDialog({ isOpen: true, id: repo.id!, name: repo.name, type: 'legacy' });
+                        }}
                         className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 transition-all flex-shrink-0"
                         title="Delete Repo"
                       >
@@ -238,6 +275,22 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
           </div>
         </div>
       </aside>
+
+      <AlertDialog
+        isOpen={deleteDialog.isOpen}
+        title={deleteDialog.type === 'cf' ? "Delete Project?" : "Delete Repository?"}
+        description={
+          <>
+            Are you sure you want to delete <span className="font-bold text-slate-900 dark:text-white">"{deleteDialog.name}"</span>? 
+            This action cannot be undone and will remove all associated assets and processing jobs.
+          </>
+        }
+        confirmText="Permanently Delete"
+        cancelText="Cancel"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteDialog(prev => ({ ...prev, isOpen: false }))}
+        type="danger"
+      />
     </>
   );
 };

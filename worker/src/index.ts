@@ -37,13 +37,36 @@ app.get('/api/projects', async (c) => {
 app.delete('/api/projects/:id', async (c) => {
   const id = c.req.param('id');
   
-  // Use a batch to delete all related resources in one go
+  // 1. Find any active jobs and terminate their workflows
+  try {
+    const activeJobs = await c.env.DB.prepare(
+      "SELECT id, workflow_id FROM jobs WHERE project_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')"
+    ).bind(id).all<{ id: string; workflow_id: string }>();
+
+    if (activeJobs.results) {
+      for (const job of activeJobs.results) {
+        if (job.workflow_id) {
+          try {
+            const instance = await c.env.INGESTION_WORKFLOW.get(job.workflow_id);
+            await instance.terminate();
+          } catch (wfErr) {
+            console.error(`Failed to terminate workflow ${job.workflow_id}:`, wfErr);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error finding active jobs for termination:', err);
+  }
+
+  // 2. Use a batch to delete all related resources in one go
+  // Must delete child records first to satisfy SQLite foreign key constraints
   await c.env.DB.batch([
-    c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM assets WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM jobs WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM event_logs WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM artifacts WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
 
   return c.json({ success: true });
