@@ -170,8 +170,11 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
         repo.name.toLowerCase().includes(repoSearch.toLowerCase())
     );
 
-    const activeRepo = repos.find(r => r.id === selectedRepoId) || (initialRepo || { name: 'Select Repo' });
+    const fallbackRepo = initialRepo || { name: 'Select Repo', brief: 'Choose a repository before you run an edit plan.', created: Date.now() } as RepoData;
+    const activeRepo = repos.find(r => r.id === selectedRepoId) || fallbackRepo;
     const activeMode = MSG_MODES.find(m => m.id === selectedModeId) || MSG_MODES[0];
+    const primaryActionLabel = selectedModeId === 'interactive' ? 'Plan Changes' : 'Execute Edit';
+    const statusLabel = isProcessing ? 'Processing request' : (selectedModeId === 'interactive' ? 'Planning mode' : 'Auto-execute mode');
 
     return (
         <div className="flex flex-col min-h-full relative fade-in bg-slate-50/50 dark:bg-background-dark font-sans">

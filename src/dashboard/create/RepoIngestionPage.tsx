@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import TopNavigation from '../../components/layout/TopNavigation';
+import AssetLibrary from '../assets/AssetLibraryPage';
+import { db } from '../../utils/db';
 import { 
     useCreateCFProject, 
     useStartIngestion, 
@@ -33,6 +35,12 @@ const getFileIcon = (type: string) => {
     return 'image';
 };
 
+const getMimeTypeFromAssetType = (type: 'video' | 'image' | 'audio') => {
+    if (type === 'video') return 'video/mp4';
+    if (type === 'image') return 'image/jpeg';
+    return 'audio/mpeg';
+};
+
 export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, initialJobId }) => {
     // Current Step: 'details' -> 'uploading' -> 'ingest' -> 'completed'
     const [step, setStep] = useState<'details' | 'uploading' | 'ingest' | 'completed'>('details');
@@ -41,6 +49,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     const [repoName, setRepoName] = useState('');
     const [repoBrief, setRepoBrief] = useState('');
     const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+    const [showAssetLibrary, setShowAssetLibrary] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Upload Progress
@@ -90,6 +99,38 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
         if (e.target.files) {
             setSelectedFiles(Array.from(e.target.files));
         }
+    };
+
+    const handleSelectAssets = async (assetIds: string[]) => {
+        const assets = await Promise.all(assetIds.map((id) => db.getAsset(id)));
+
+        const filesFromLibrary = assets
+            .filter((asset): asset is NonNullable<typeof asset> => Boolean(asset?.blob))
+            .map((asset) => new File(
+                [asset.blob as Blob],
+                asset.name,
+                {
+                    type: (asset.blob as Blob).type || getMimeTypeFromAssetType(asset.type),
+                    lastModified: asset.created,
+                },
+            ));
+
+        setSelectedFiles((prev) => {
+            const existingKeys = new Set(prev.map((file) => `${file.name}-${file.size}-${file.type}`));
+            const nextFiles = [...prev];
+
+            filesFromLibrary.forEach((file) => {
+                const key = `${file.name}-${file.size}-${file.type}`;
+                if (!existingKeys.has(key)) {
+                    existingKeys.add(key);
+                    nextFiles.push(file);
+                }
+            });
+
+            return nextFiles;
+        });
+
+        setShowAssetLibrary(false);
     };
 
     const handleCreateProject = async () => {
@@ -328,18 +369,18 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
 
                                     {selectedFiles.length === 0 ? (
                                         <button
-                                            onClick={() => fileInputRef.current?.click()}
+                                            onClick={() => setShowAssetLibrary(true)}
                                             className="group flex h-56 w-full flex-col items-center justify-center gap-4 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/70 px-6 text-center transition-all duration-300 hover:-translate-y-0.5 hover:border-primary hover:bg-primary/5 dark:border-border-dark dark:bg-background-dark/40 dark:hover:bg-primary/10"
                                         >
                                             <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary transition-transform duration-300 group-hover:scale-105">
-                                                <span className="material-icons-outlined text-3xl">cloud_upload</span>
+                                                <span className="material-icons-outlined text-3xl">video_library</span>
                                             </div>
                                             <div className="space-y-2">
                                                 <p className="text-base font-display font-bold tracking-tight text-slate-900 dark:text-white">
-                                                    Drop in your source set
+                                                    Open your asset library
                                                 </p>
                                                 <p className="mx-auto max-w-md text-sm leading-6 text-slate-500 dark:text-gray-400">
-                                                    Select raw footage, stills, audio, or mixed reference material. Trem will stage everything into one repository pass.
+                                                    Pick from existing Trem assets, or upload new media inside the popup before staging the repository.
                                                 </p>
                                             </div>
                                         </button>
@@ -347,11 +388,18 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                                         <div className="space-y-4">
                                             <div className="flex flex-wrap gap-3">
                                                 <button
+                                                    onClick={() => setShowAssetLibrary(true)}
+                                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all duration-200 ease-out hover:border-primary/40 hover:text-slate-900 active:scale-95 dark:border-border-dark dark:bg-background-dark dark:text-gray-300 dark:hover:text-white"
+                                                >
+                                                    <span className="material-icons-outlined text-base">video_library</span>
+                                                    Choose from Assets
+                                                </button>
+                                                <button
                                                     onClick={() => fileInputRef.current?.click()}
                                                     className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all duration-200 ease-out hover:border-primary/40 hover:text-slate-900 active:scale-95 dark:border-border-dark dark:bg-background-dark dark:text-gray-300 dark:hover:text-white"
                                                 >
-                                                    <span className="material-icons-outlined text-base">add</span>
-                                                    Add More Files
+                                                    <span className="material-icons-outlined text-base">upload_file</span>
+                                                    Upload from Device
                                                 </button>
                                                 <button
                                                     onClick={() => setSelectedFiles([])}
@@ -624,6 +672,18 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             </section>
                 </div>
             </main>
+
+            {showAssetLibrary && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-background-dark/60 p-4 backdrop-blur-md animate-in fade-in duration-200">
+                    <AssetLibrary
+                        isModal
+                        onClose={() => setShowAssetLibrary(false)}
+                        onSelect={(assets) => {
+                            void handleSelectAssets(assets);
+                        }}
+                    />
+                </div>
+            )}
         </div>
     );
 };
