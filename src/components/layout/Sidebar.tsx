@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, RepoData, PendingRepoData } from '../../utils/db';
 import { useTremStore } from '../../store/useTremStore';
-import { useRepos, useProjects } from '../../hooks/useQueries';
+import { useRepos, useProjects, useDeleteRepo, useDeleteCFProject } from '../../hooks/useQueries';
 // We do not need backgroundIngestionStore here for active jobs, handled by react-query
 
 // Cloudflare Native Active Jobs
@@ -47,12 +47,34 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
   // Fetch both IndexedDB repos (legacy) and Cloudflare Projects
   const { data: legacyRepos = [] } = useRepos();
   const { data: cfProjects = [] } = useProjects();
+  const deleteRepo = useDeleteRepo();
+  const deleteCFProject = useDeleteCFProject();
 
   const handleRepoClick = (repo: any) => {
     if (onSelectRepo) {
       onSelectRepo(repo);
     }
     onNavigate('repo');
+  };
+
+  const handleDeleteLegacy = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    if (window.confirm('Are you sure you want to delete this repository?')) {
+      await deleteRepo.mutateAsync(id);
+      if (repoData?.id && String(repoData.id) === String(id)) {
+        onNavigate('trem-edit');
+      }
+    }
+  };
+
+  const handleDeleteCF = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (window.confirm('Are you sure you want to delete this project?')) {
+      await deleteCFProject.mutateAsync(id);
+      if (repoData?.id && String(repoData.id) === String(id)) {
+        onNavigate('trem-edit');
+      }
+    }
   };
 
   return (
@@ -119,20 +141,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
 
 
 
-          {/* Active Processing */}
+          {/* Active Processing section (only header if active jobs exist) */}
           <div>
-            {!isCollapsed && (
+            {!isCollapsed && cfProjects.some((p: any) => p.status !== 'completed' && p.status !== 'failed') && (
               <h3 className="px-2 text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-gray-500 mb-2 mt-2 font-bold whitespace-nowrap overflow-hidden">Active Processing</h3>
             )}
             <ActiveJobsList isCollapsed={isCollapsed} onNavigate={onNavigate} projects={cfProjects} />
-            <ul className="space-y-1">
-              <li>
-                <button onClick={() => onNavigate('timeline')} className={`w-full text-left flex items-center gap-3 px-2 py-2 text-sm rounded-md text-slate-600 dark:text-gray-400 hover:bg-slate-100 dark:hover:bg-white/5 dark:hover:text-white transition-colors group ${isCollapsed ? 'justify-center' : ''}`} title={isCollapsed ? `Edit: ${repoData?.name || 'project'}` : ""}>
-                  <span className="material-icons-outlined text-sm text-slate-400 group-hover:text-primary transition-colors">edit</span>
-                  {!isCollapsed && <span className="truncate">Edit: {repoData?.name || 'project'}</span>}
-                </button>
-              </li>
-            </ul>
           </div>
 
           {/* Video Repos */}
@@ -144,36 +158,58 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
               {legacyRepos.length === 0 && cfProjects.length === 0 && !isCollapsed && (
                 <li className="px-2 py-2 text-xs text-slate-400 italic">No repositories yet.</li>
               )}
-              {cfProjects.filter((p: any) => p.status === 'completed').map((project: any) => (
-                <li key={`cf-${project.id}`}>
-                  <button
-                    onClick={() => handleRepoClick({ id: project.id, name: project.name, brief: project.brief, created: new Date(project.created_at).getTime() })}
-                    className={`
-                      w-full flex items-center gap-3 px-3 py-2 rounded-lg 
-                      text-sm font-medium transition-colors
-                      ${repoData?.id === project.id 
-                        ? 'bg-primary/20 text-primary dark:bg-primary/20 dark:text-primary' 
-                        : 'text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-zinc-800 hover:text-slate-900 dark:hover:text-white'}
-                      ${isCollapsed ? 'justify-center' : ''}
-                    `}
-                    title={isCollapsed ? project.name : ''}
-                  >
-                    <span className="material-icons-outlined text-lg">folder</span>
-                    {!isCollapsed && <span className="truncate">{project.name} (CF)</span>}
-                  </button>
+              {cfProjects.filter((p: any) => p.status === 'completed' || p.status === 'failed').map((project: any) => (
+                <li key={`cf-${project.id}`} className="group/item">
+                  <div className="flex items-center gap-1 group">
+                    <button
+                      onClick={() => handleRepoClick({ id: project.id, name: project.name, brief: project.brief, created: new Date(project.created_at).getTime() })}
+                      className={`
+                        flex-1 flex items-center gap-3 px-3 py-2 rounded-lg 
+                        text-sm font-medium transition-colors
+                        ${repoData?.id === project.id 
+                          ? 'bg-primary/20 text-primary dark:bg-primary/20 dark:text-primary' 
+                          : 'text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-zinc-800 hover:text-slate-900 dark:hover:text-white'}
+                        ${isCollapsed ? 'justify-center' : ''}
+                      `}
+                      title={isCollapsed ? project.name : ''}
+                    >
+                      <span className="material-icons-outlined text-lg">folder</span>
+                      {!isCollapsed && <span className="truncate">{project.name}</span>}
+                    </button>
+                    {!isCollapsed && (
+                      <button
+                        onClick={(e) => handleDeleteCF(e, project.id)}
+                        className="opacity-0 group-hover/item:opacity-100 p-1 text-slate-400 hover:text-red-500 transition-all"
+                        title="Delete Project"
+                      >
+                        <span className="material-icons-outlined text-sm">delete</span>
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
               
               {/* Legacy IndexedDB Repositories */}
               {legacyRepos.map((repo) => (
-                <li key={repo.id}>
-                  <button
-                    onClick={() => handleRepoClick(repo)}
-                    className={`w-full text-left flex items-center gap-3 px-2 py-2 text-sm rounded-md text-slate-600 dark:text-gray-400 hover:bg-slate-100 dark:hover:bg-white/5 dark:hover:text-white transition-colors group ${isCollapsed ? 'justify-center' : ''}`} title={isCollapsed ? repo.name : ""}
-                  >
-                    <span className="material-icons-outlined text-sm text-emerald-400/70 group-hover:text-primary transition-colors">folder</span>
-                    {!isCollapsed && <span className="truncate">{repo.name}</span>}
-                  </button>
+                <li key={repo.id} className="group/item">
+                  <div className="flex items-center gap-1 group">
+                    <button
+                      onClick={() => handleRepoClick(repo)}
+                      className={`flex-1 text-left flex items-center gap-3 px-2 py-2 text-sm rounded-md text-slate-600 dark:text-gray-400 hover:bg-slate-100 dark:hover:bg-white/5 dark:hover:text-white transition-colors group ${isCollapsed ? 'justify-center' : ''}`} title={isCollapsed ? repo.name : ""}
+                    >
+                      <span className="material-icons-outlined text-sm text-emerald-400/70 group-hover:text-primary transition-colors">folder</span>
+                      {!isCollapsed && <span className="truncate">{repo.name}</span>}
+                    </button>
+                    {!isCollapsed && (
+                      <button
+                        onClick={(e) => handleDeleteLegacy(e, repo.id!)}
+                        className="opacity-0 group-hover/item:opacity-100 p-1 text-slate-400 hover:text-red-500 transition-all"
+                        title="Delete Repo"
+                      >
+                        <span className="material-icons-outlined text-sm">delete</span>
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>

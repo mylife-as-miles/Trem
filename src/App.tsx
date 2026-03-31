@@ -88,11 +88,17 @@ const App: React.FC = () => {
             }
             else if (path.startsWith('/repo/')) {
                 const parts = path.split('/');
-                const id = parts[2] ? parseInt(parts[2]) : null;
+                const idStr = parts[2];
 
-                if (id && !isNaN(id)) {
-                    setActiveProjectId(undefined);
-                    setActiveRepoId(id);
+                if (idStr) {
+                    const idNum = parseInt(idStr);
+                    if (!isNaN(idNum) && idStr.length < 10) {
+                        setActiveRepoId(idNum);
+                        setActiveProjectId(undefined);
+                    } else {
+                        setActiveRepoId(undefined);
+                        setActiveProjectId(idStr);
+                    }
                     // View logic
                     if (path.endsWith('/files')) {
                         setCurrentView('repo-files');
@@ -139,10 +145,20 @@ const App: React.FC = () => {
             case 'settings': url = '/settings'; break;
             case 'dashboard': url = '/trem-edit'; break; // Dashboard maps to TremEdit
             case 'repo':
-                if (repoData?.id) url = `/repo/${repoData.id}`;
+                if (repoData?.id) {
+                    url = `/repo/${repoData.id}`;
+                } else if (typeof view === 'string' && view.startsWith('repo/')) {
+                    url = `/${view}`;
+                }
+
                 break;
             case 'repo-files':
-                if (repoData?.id) url = `/repo/${repoData.id}/files`;
+                if (repoData?.id) {
+                    url = `/repo/${repoData.id}/files`;
+                } else if (typeof view === 'string' && view.startsWith('repo/files/')) {
+                    url = `/${view}`;
+                }
+
                 break;
             default:
                 // Handle dynamic routes like repo/:id/logs
@@ -151,10 +167,6 @@ const App: React.FC = () => {
                         url = `/${view}`;
                     } else if (view.startsWith('create-repo/')) {
                         url = `/${view}`;
-                        const id = view.split('/')[1];
-                        setActiveProjectId(id);
-                        setCurrentView('create-repo');
-                        return; // Early return as we set view manually
                     }
                 }
                 break;

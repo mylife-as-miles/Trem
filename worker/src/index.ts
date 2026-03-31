@@ -34,6 +34,22 @@ app.get('/api/projects', async (c) => {
   return c.json(results);
 });
 
+app.delete('/api/projects/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  // Use a batch to delete all related resources in one go
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM assets WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM jobs WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM event_logs WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM artifacts WHERE project_id = ?").bind(id),
+  ]);
+
+  return c.json({ success: true });
+});
+
+
 app.get('/api/projects/:id', async (c) => {
   const id = c.req.param('id');
   const project = await c.env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first();

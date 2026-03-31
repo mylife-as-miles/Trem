@@ -15,6 +15,15 @@ export const apiClient = {
     return res.json();
   },
 
+  async deleteProject(id: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to delete project');
+    return res.json();
+  },
+
+
   async getProjectPayload(id: string) {
     const res = await fetch(`${API_BASE}/api/projects/${id}/payload`);
     if (res.status === 404) return null;

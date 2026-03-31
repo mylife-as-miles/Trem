@@ -58,6 +58,18 @@ export const useUpdateRepo = () => {
     });
 };
 
+export const useDeleteRepo = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (id: number) => {
+            return await db.deleteRepo(id);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.repos });
+        },
+    });
+};
+
 // --- Assets ---
 
 // TODO: implementing asset hooks as needed
@@ -113,6 +125,18 @@ export const useStartIngestion = () => {
         },
         onSuccess: (_, projectId) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectPayload(projectId) });
+        },
+    });
+};
+
+export const useDeleteCFProject = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (projectId: string) => {
+            return await apiClient.deleteProject(projectId);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjects });
         },
     });
 };
