@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { RepoData } from '../utils/db';
 
-export type ViewType = 'landing' | 'dashboard' | 'repo' | 'timeline' | 'diff' | 'assets' | 'settings' | 'create-repo' | 'repo-files' | 'repo-logs' | 'trem-create' | 'trem-edit';
+export type ViewType = 'dashboard' | 'repo' | 'timeline' | 'diff' | 'assets' | 'settings' | 'create-repo' | 'repo-files' | 'repo-logs' | 'trem-create' | 'trem-edit';
 
 interface TremStore {
     currentView: ViewType;
@@ -18,7 +18,7 @@ interface TremStore {
 }
 
 export const useTremStore = create<TremStore>((set) => ({
-    currentView: 'landing',
+    currentView: 'trem-edit',
     repoData: null,
     isSidebarOpen: false,
     editPlan: null,
