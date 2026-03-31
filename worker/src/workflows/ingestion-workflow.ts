@@ -42,6 +42,24 @@ type TranscriptionResult = {
 
 const REPLICATE_WHISPER_VERSION = '8099696689d249cf8b122d833c36ac3f75505c666a395ca40ef26f68e7d3d16e';
 const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024; // 25MB for Replicate
+const MAX_INGEST_AGENTS = 4;
+
+type AgentState = {
+  slot: number;
+  status: 'idle' | 'queued' | 'transcribing' | 'analyzing' | 'completed' | 'error';
+  assetId: string | null;
+  assetName: string | null;
+  completedCount: number;
+};
+
+const createAgentStates = (activeAssetCount: number): AgentState[] =>
+  Array.from({ length: MAX_INGEST_AGENTS }, (_, index) => ({
+    slot: index + 1,
+    status: index < activeAssetCount ? 'queued' : 'idle',
+    assetId: null,
+    assetName: null,
+    completedCount: 0,
+  }));
 
 export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> {
   async run(event: WorkflowEvent<IngestionParams>, step: WorkflowStep) {
@@ -53,12 +71,17 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
       ).bind(crypto.randomUUID(), projectId, jobId, message, level).run();
     };
 
-    const updateCoordinator = async (progress: number, message: string, jobStatus?: string) => {
+    const updateCoordinator = async (
+      progress: number,
+      message: string,
+      jobStatus?: string,
+      agents?: AgentState[],
+    ) => {
       const doId = this.env.PROJECT_COORDINATOR.idFromName(projectId);
       const stub = this.env.PROJECT_COORDINATOR.get(doId);
       await stub.fetch(new Request('http://do/progress', {
         method: 'POST',
-        body: JSON.stringify({ progress, message, jobStatus })
+        body: JSON.stringify({ progress, message, jobStatus, agents })
       }));
     };
 
@@ -100,6 +123,12 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
         }
 
         await insertEventLog(`Found ${assetsRes.results.length} asset(s) to process`);
+        await updateCoordinator(
+          5,
+          `Prepared ${assetsRes.results.length} asset(s) for the 4-agent pool`,
+          'running',
+          createAgentStates(Math.min(assetsRes.results.length, MAX_INGEST_AGENTS)),
+        );
         return assetsRes.results;
       });
 
@@ -109,123 +138,196 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
       const processedAssets = await step.do('process_assets', async () => {
         await logProgress(`Processing ${assetsToProcess.length} assets...`, 15, 'running');
 
-        const results: Array<{ id: string; name: string; type: string; metadata: AssetMetadata }> = [];
+        const results: Array<{ id: string; name: string; type: string; metadata: AssetMetadata } | null> =
+          Array.from({ length: assetsToProcess.length }, () => null);
+        const agentStates = createAgentStates(Math.min(assetsToProcess.length, MAX_INGEST_AGENTS));
+        const workerCount = Math.min(MAX_INGEST_AGENTS, assetsToProcess.length);
+        let nextAssetIndex = 0;
+        let completedAssets = 0;
 
-        for (let i = 0; i < assetsToProcess.length; i++) {
-          const asset = assetsToProcess[i];
-          const progressPct = 15 + Math.floor(((i + 1) / assetsToProcess.length) * 45);
+        const computeProgress = () =>
+          15 + Math.floor((completedAssets / Math.max(assetsToProcess.length, 1)) * 45);
 
-          try {
-            if (!asset.storage_key) {
-              throw new Error('Missing storage key');
+        const syncAgents = async (message: string, status = 'running') => {
+          await updateCoordinator(computeProgress(), message, status, agentStates);
+        };
+
+        const runAgent = async (agentIndex: number) => {
+          const agent = agentStates[agentIndex];
+
+          while (true) {
+            const assetIndex = nextAssetIndex;
+            nextAssetIndex += 1;
+
+            if (assetIndex >= assetsToProcess.length) {
+              agent.status = 'idle';
+              agent.assetId = null;
+              agent.assetName = null;
+              await syncAgents(`Agent ${agent.slot} is idle`);
+              return;
             }
 
-            const object = await this.env.BUCKET.get(asset.storage_key);
-            if (!object) {
-              throw new Error(`Asset not found in R2: ${asset.storage_key}`);
-            }
+            const asset = assetsToProcess[assetIndex];
+            agent.assetId = asset.id;
+            agent.assetName = asset.name;
+            agent.status = 'queued';
 
-            const mimeType = object.httpMetadata?.contentType || inferMimeType(asset.name, asset.type);
-            const size = object.size;
+            await insertEventLog(`Agent ${agent.slot} picked up ${asset.name}`);
+            await syncAgents(`Agent ${agent.slot} picked up ${asset.name}`);
 
-            // -- Transcription --
-            let transcript: TranscriptionResult | null = null;
-            if (this.env.REPLICATE_API_TOKEN && shouldTranscribe(mimeType, size)) {
-              await insertEventLog(`Transcribing ${asset.name}...`);
-              await updateJobStatus('transcribing', progressPct - 10);
-              await updateCoordinator(progressPct - 10, `Transcribing ${asset.name}...`, 'transcribing');
+            try {
+              if (!asset.storage_key) {
+                throw new Error('Missing storage key');
+              }
+
+              const object = await this.env.BUCKET.get(asset.storage_key);
+              if (!object) {
+                throw new Error(`Asset not found in R2: ${asset.storage_key}`);
+              }
+
+              const mimeType = object.httpMetadata?.contentType || inferMimeType(asset.name, asset.type);
+              const size = object.size;
+              const fileBuffer = await object.arrayBuffer();
+
+              let transcript: TranscriptionResult | null = null;
+              if (this.env.REPLICATE_API_TOKEN && shouldTranscribe(mimeType, size)) {
+                agent.status = 'transcribing';
+                await insertEventLog(`Agent ${agent.slot} transcribing ${asset.name}...`);
+                await updateJobStatus('transcribing', computeProgress());
+                await updateCoordinator(
+                  computeProgress(),
+                  `Agent ${agent.slot} transcribing ${asset.name}...`,
+                  'transcribing',
+                  agentStates,
+                );
+
+                await this.env.DB.prepare(
+                  "UPDATE assets SET status = 'transcribing' WHERE id = ?"
+                ).bind(asset.id).run();
+
+                transcript = await transcribeWithReplicate(
+                  fileBuffer,
+                  mimeType,
+                  this.env.REPLICATE_API_TOKEN
+                );
+
+                if (transcript) {
+                  const srtKey = `projects/${projectId}/transcripts/${asset.id}.srt`;
+                  const jsonKey = `projects/${projectId}/transcripts/${asset.id}.json`;
+
+                  await this.env.BUCKET.put(srtKey, transcript.srt, {
+                    httpMetadata: { contentType: 'text/plain' }
+                  });
+                  await this.env.BUCKET.put(jsonKey, JSON.stringify(transcript), {
+                    httpMetadata: { contentType: 'application/json' }
+                  });
+
+                  await insertEventLog(`Agent ${agent.slot} completed transcription for ${asset.name}`);
+                }
+              } else if (isMediaWithAudio(mimeType) && size > MAX_TRANSCRIBE_BYTES) {
+                await insertEventLog(
+                  `Skipped transcription for ${asset.name} (${(size / 1024 / 1024).toFixed(1)}MB exceeds limit)`,
+                  'warn'
+                );
+              }
+
+              agent.status = 'analyzing';
+              await insertEventLog(`Agent ${agent.slot} analyzing ${asset.name}...`);
+              await updateJobStatus('analyzing', computeProgress());
+              await updateCoordinator(
+                computeProgress(),
+                `Agent ${agent.slot} analyzing ${asset.name}...`,
+                'analyzing',
+                agentStates,
+              );
 
               await this.env.DB.prepare(
-                "UPDATE assets SET status = 'transcribing' WHERE id = ?"
+                "UPDATE assets SET status = 'analyzing' WHERE id = ?"
               ).bind(asset.id).run();
 
-              transcript = await transcribeWithReplicate(
-                await object.arrayBuffer(),
+              const analysis = this.env.GEMINI_API_KEY
+                ? await analyzeAssetWithGemini({
+                    apiKey: this.env.GEMINI_API_KEY,
+                    assetName: asset.name,
+                    assetType: asset.type,
+                    mimeType,
+                    size,
+                    transcript: transcript?.text || '',
+                  })
+                : {
+                    description: `Uploaded ${asset.type} asset: ${asset.name}`,
+                    tags: buildFallbackTags(asset.name, asset.type, mimeType),
+                  };
+
+              const metadata: AssetMetadata = {
+                ...analysis,
+                transcript: transcript?.text || undefined,
+                srt: transcript?.srt || undefined,
                 mimeType,
-                this.env.REPLICATE_API_TOKEN
+                size,
+                storageKey: asset.storage_key,
+              };
+
+              await this.env.DB.prepare(
+                "UPDATE assets SET status = 'ready', metadata = ? WHERE id = ?"
+              ).bind(JSON.stringify(metadata), asset.id).run();
+
+              results[assetIndex] = { id: asset.id, name: asset.name, type: asset.type, metadata };
+              agent.status = 'completed';
+              agent.completedCount += 1;
+              completedAssets += 1;
+
+              await insertEventLog(`Agent ${agent.slot} finished ${asset.name}`);
+              await updateCoordinator(
+                computeProgress(),
+                `Processed ${completedAssets}/${assetsToProcess.length} assets`,
+                'running',
+                agentStates,
               );
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              const errorMeta: AssetMetadata = {
+                description: `Processing failed for ${asset.name}`,
+                tags: ['error'],
+                error: errorMsg,
+                storageKey: asset.storage_key,
+              };
 
-              // Store transcript as separate R2 object
-              if (transcript) {
-                const srtKey = `projects/${projectId}/transcripts/${asset.id}.srt`;
-                const jsonKey = `projects/${projectId}/transcripts/${asset.id}.json`;
+              await this.env.DB.prepare(
+                "UPDATE assets SET status = 'error', metadata = ? WHERE id = ?"
+              ).bind(JSON.stringify(errorMeta), asset.id).run();
 
-                await this.env.BUCKET.put(srtKey, transcript.srt, {
-                  httpMetadata: { contentType: 'text/plain' }
-                });
-                await this.env.BUCKET.put(jsonKey, JSON.stringify(transcript), {
-                  httpMetadata: { contentType: 'application/json' }
-                });
-
-                await insertEventLog(`Transcription complete for ${asset.name}`);
-              }
-            } else if (isMediaWithAudio(mimeType) && size > MAX_TRANSCRIBE_BYTES) {
-              await insertEventLog(
-                `Skipped transcription for ${asset.name} (${(size / 1024 / 1024).toFixed(1)}MB exceeds limit)`,
-                'warn'
+              agent.status = 'error';
+              completedAssets += 1;
+              await insertEventLog(`Agent ${agent.slot} failed ${asset.name}: ${errorMsg}`, 'error');
+              await updateCoordinator(
+                computeProgress(),
+                `Processed ${completedAssets}/${assetsToProcess.length} assets`,
+                'running',
+                agentStates,
               );
+            } finally {
+              agent.assetId = null;
+              agent.assetName = null;
+              agent.status = nextAssetIndex < assetsToProcess.length ? 'queued' : 'idle';
             }
-
-            // -- Analysis (Gemini) --
-            await insertEventLog(`Analyzing ${asset.name}...`);
-            await updateJobStatus('analyzing', progressPct - 5);
-            await updateCoordinator(progressPct - 5, `Analyzing ${asset.name}...`, 'analyzing');
-
-            await this.env.DB.prepare(
-              "UPDATE assets SET status = 'analyzing' WHERE id = ?"
-            ).bind(asset.id).run();
-
-            const analysis = this.env.GEMINI_API_KEY
-              ? await analyzeAssetWithGemini({
-                  apiKey: this.env.GEMINI_API_KEY,
-                  assetName: asset.name,
-                  assetType: asset.type,
-                  mimeType,
-                  size,
-                  transcript: transcript?.text || '',
-                })
-              : {
-                  description: `Uploaded ${asset.type} asset: ${asset.name}`,
-                  tags: buildFallbackTags(asset.name, asset.type, mimeType),
-                };
-
-            const metadata: AssetMetadata = {
-              ...analysis,
-              transcript: transcript?.text || undefined,
-              srt: transcript?.srt || undefined,
-              mimeType,
-              size,
-              storageKey: asset.storage_key,
-            };
-
-            await this.env.DB.prepare(
-              "UPDATE assets SET status = 'ready', metadata = ? WHERE id = ?"
-            ).bind(JSON.stringify(metadata), asset.id).run();
-
-            results.push({ id: asset.id, name: asset.name, type: asset.type, metadata });
-            await insertEventLog(`Finished processing ${asset.name}`);
-
-            await updateCoordinator(progressPct, `Processed ${i + 1}/${assetsToProcess.length} assets`, 'running');
-          } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            const errorMeta: AssetMetadata = {
-              description: `Processing failed for ${asset.name}`,
-              tags: ['error'],
-              error: errorMsg,
-              storageKey: asset.storage_key,
-            };
-
-            await this.env.DB.prepare(
-              "UPDATE assets SET status = 'error', metadata = ? WHERE id = ?"
-            ).bind(JSON.stringify(errorMeta), asset.id).run();
-
-            await insertEventLog(`Failed processing ${asset.name}: ${errorMsg}`, 'error');
-
-            // Don't push to results but continue processing other assets
           }
-        }
+        };
 
-        return results;
+        await Promise.all(
+          Array.from({ length: workerCount }, (_, index) => runAgent(index))
+        );
+
+        await updateCoordinator(
+          60,
+          `Agent pool complete. ${completedAssets}/${assetsToProcess.length} asset(s) processed.`,
+          'running',
+          agentStates,
+        );
+
+        return results.filter(
+          (item): item is { id: string; name: string; type: string; metadata: AssetMetadata } => Boolean(item)
+        );
       });
 
       // ============================================================

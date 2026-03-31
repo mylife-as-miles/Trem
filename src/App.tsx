@@ -28,7 +28,7 @@ const App: React.FC = () => {
 
     // Local State for Query
     const [activeRepoId, setActiveRepoId] = useState<number | undefined>(undefined);
-    const [activeJobId, setActiveJobId] = useState<string | undefined>(undefined);
+    const [activeProjectId, setActiveProjectId] = useState<string | undefined>(undefined);
     const { data: fetchedRepo, isLoading: isRepoLoading } = useRepo(activeRepoId);
 
     // Sync Query Data to Store
@@ -49,21 +49,49 @@ const App: React.FC = () => {
             const path = window.location.pathname;
 
             if (path === '/') {
+                setActiveProjectId(undefined);
                 window.history.replaceState({}, '', '/trem-edit');
                 setCurrentView('trem-edit');
             }
-            else if (path === '/timeline') setCurrentView('timeline');
-            else if (path === '/diff') setCurrentView('diff');
-            else if (path === '/assets') setCurrentView('assets');
-            else if (path === '/create-repo') setCurrentView('create-repo');
-            else if (path === '/trem-create') setCurrentView('trem-create');
-            else if (path === '/trem-edit') setCurrentView('trem-edit');
-            else if (path === '/repo-files' && repoData) setCurrentView('repo-files');
+            else if (path === '/timeline') {
+                setActiveProjectId(undefined);
+                setCurrentView('timeline');
+            }
+            else if (path === '/diff') {
+                setActiveProjectId(undefined);
+                setCurrentView('diff');
+            }
+            else if (path === '/assets') {
+                setActiveProjectId(undefined);
+                setCurrentView('assets');
+            }
+            else if (path === '/create-repo') {
+                setActiveProjectId(undefined);
+                setCurrentView('create-repo');
+            }
+            else if (path.startsWith('/create-repo/')) {
+                const projectId = path.split('/')[2];
+                setActiveProjectId(projectId || undefined);
+                setCurrentView('create-repo');
+            }
+            else if (path === '/trem-create') {
+                setActiveProjectId(undefined);
+                setCurrentView('trem-create');
+            }
+            else if (path === '/trem-edit') {
+                setActiveProjectId(undefined);
+                setCurrentView('trem-edit');
+            }
+            else if (path === '/repo-files' && repoData) {
+                setActiveProjectId(undefined);
+                setCurrentView('repo-files');
+            }
             else if (path.startsWith('/repo/')) {
                 const parts = path.split('/');
                 const id = parts[2] ? parseInt(parts[2]) : null;
 
                 if (id && !isNaN(id)) {
+                    setActiveProjectId(undefined);
                     setActiveRepoId(id);
                     // View logic
                     if (path.endsWith('/files')) {
@@ -77,10 +105,12 @@ const App: React.FC = () => {
             } else {
                 // Default to Trem Edit for unknown routes, but keep the old orchestrator alias.
                 if (path === '/orchestrator') {
+                    setActiveProjectId(undefined);
                     window.history.replaceState({}, '', '/trem-edit');
                     setCurrentView('trem-edit');
                     return;
                 }
+                setActiveProjectId(undefined);
                 window.history.replaceState({}, '', '/trem-edit');
                 setCurrentView('trem-edit');
             }
@@ -100,7 +130,10 @@ const App: React.FC = () => {
             case 'timeline': url = '/timeline'; break;
             case 'diff': url = '/diff'; break;
             case 'assets': url = '/assets'; break;
-            case 'create-repo': url = '/create-repo'; break;
+            case 'create-repo':
+                setActiveProjectId(undefined);
+                url = '/create-repo';
+                break;
             case 'trem-create': url = '/trem-create'; break;
             case 'trem-edit': url = '/trem-edit'; break;
             case 'settings': url = '/settings'; break;
@@ -119,12 +152,16 @@ const App: React.FC = () => {
                     } else if (view.startsWith('create-repo/')) {
                         url = `/${view}`;
                         const id = view.split('/')[1];
-                        setActiveJobId(id);
+                        setActiveProjectId(id);
                         setCurrentView('create-repo');
                         return; // Early return as we set view manually
                     }
                 }
                 break;
+        }
+
+        if (!(typeof view === 'string' && view.startsWith('create-repo/')) && view !== 'create-repo') {
+            setActiveProjectId(undefined);
         }
 
         if (window.location.pathname !== url) {
@@ -138,13 +175,6 @@ const App: React.FC = () => {
             setCurrentView(view as ViewType);
         }
         setIsSidebarOpen(false);
-    };
-
-    const handleCreateRepo = (data: RepoData) => {
-        setRepoData(data);
-        const url = data.id ? `/repo/${data.id}` : '/trem-edit';
-        window.history.pushState({}, '', url);
-        setCurrentView('repo');
     };
 
     const handleSelectRepo = (data: RepoData) => {
@@ -170,7 +200,7 @@ const App: React.FC = () => {
             case 'assets':
                 return <AssetLibrary onNavigate={handleNavigate} />;
             case 'create-repo':
-                return <CreateRepoView onNavigate={handleNavigate} onCreateRepo={handleCreateRepo} initialJobId={activeJobId} />;
+                return <CreateRepoView onNavigate={handleNavigate} initialProjectId={activeProjectId} />;
             case 'repo-files':
                 return <RepoFilesView onNavigate={handleNavigate} repoData={repoData} />;
             case 'repo-logs':

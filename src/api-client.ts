@@ -17,6 +17,7 @@ export const apiClient = {
 
   async getProjectPayload(id: string) {
     const res = await fetch(`${API_BASE}/api/projects/${id}/payload`);
+    if (res.status === 404) return null;
     if (!res.ok) throw new Error('Failed to fetch project payload');
     return res.json();
   },

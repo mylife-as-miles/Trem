@@ -55,7 +55,9 @@ app.get('/api/projects/:id', async (c) => {
     assets: assets.results,
     activeJob: jobs.results[0] || null,
     logs: logs.results,
-    liveProgress: doStatus.progress
+    liveProgress: doStatus.progress,
+    liveStatus: doStatus.jobStatus,
+    liveAgents: doStatus.agents || []
   });
 });
 
@@ -83,7 +85,8 @@ app.get('/api/projects/:id/payload', async (c) => {
     artifacts: artifacts.results,
     logs: logs.results,
     liveProgress: doStatus.progress,
-    liveStatus: doStatus.jobStatus
+    liveStatus: doStatus.jobStatus,
+    liveAgents: doStatus.agents || []
   });
 });
 

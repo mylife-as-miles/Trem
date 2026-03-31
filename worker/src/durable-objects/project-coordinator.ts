@@ -1,9 +1,27 @@
 import { DurableObject } from "cloudflare:workers";
 
+type AgentState = {
+  slot: number;
+  status: string;
+  assetId: string | null;
+  assetName: string | null;
+  completedCount: number;
+};
+
+const createDefaultAgentStates = (): AgentState[] =>
+  Array.from({ length: 4 }, (_, index) => ({
+    slot: index + 1,
+    status: 'idle',
+    assetId: null,
+    assetName: null,
+    completedCount: 0,
+  }));
+
 export class ProjectCoordinatorDO extends DurableObject {
   private activeJobId: string | null = null;
   private progress: number = 0;
   private jobStatus: string = 'idle';
+  private agentStates: AgentState[] = createDefaultAgentStates();
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -16,6 +34,7 @@ export class ProjectCoordinatorDO extends DurableObject {
       this.activeJobId = body.jobId;
       this.progress = 0;
       this.jobStatus = 'queued';
+      this.agentStates = createDefaultAgentStates();
       return new Response(JSON.stringify({ success: true }));
     }
 
@@ -23,20 +42,28 @@ export class ProjectCoordinatorDO extends DurableObject {
       this.activeJobId = null;
       this.progress = 100;
       this.jobStatus = 'completed';
+      this.agentStates = this.agentStates.map((agent) => ({
+        ...agent,
+        status: 'idle',
+        assetId: null,
+        assetName: null,
+      }));
       this.broadcast({ type: 'job_completed' });
       return new Response(JSON.stringify({ success: true }));
     }
 
     if (url.pathname === '/progress') {
-      const body: { progress: number, message?: string, status?: string } = await request.json();
+      const body: { progress: number, message?: string, status?: string, jobStatus?: string, agents?: AgentState[] } = await request.json();
       if (typeof body.progress === 'number') this.progress = body.progress;
-      if (body.status) this.jobStatus = body.status;
+      if (body.status || body.jobStatus) this.jobStatus = body.status || body.jobStatus || this.jobStatus;
+      if (Array.isArray(body.agents)) this.agentStates = body.agents;
       
       this.broadcast({ 
         type: 'progress', 
         progress: this.progress, 
         message: body.message,
-        jobStatus: this.jobStatus
+        jobStatus: this.jobStatus,
+        agents: this.agentStates,
       });
       return new Response(JSON.stringify({ success: true }));
     }
@@ -45,7 +72,8 @@ export class ProjectCoordinatorDO extends DurableObject {
       return new Response(JSON.stringify({ 
         activeJobId: this.activeJobId, 
         progress: this.progress,
-        jobStatus: this.jobStatus
+        jobStatus: this.jobStatus,
+        agents: this.agentStates,
       }));
     }
 
@@ -65,7 +93,8 @@ export class ProjectCoordinatorDO extends DurableObject {
         type: 'progress',
         progress: this.progress,
         jobStatus: this.jobStatus,
-        message: 'Connected to coordinator'
+        message: 'Connected to coordinator',
+        agents: this.agentStates,
       }));
 
       return new Response(null, {

@@ -11,7 +11,7 @@ import { apiClient } from '../../api-client';
 
 interface CreateRepoViewProps {
     onNavigate: (view: 'dashboard' | 'repo' | 'timeline' | 'diff' | 'assets' | 'settings' | 'create-repo' | string) => void;
-    initialJobId?: string;
+    initialProjectId?: string;
 }
 
 const formatFileSize = (bytes: number) => {
@@ -41,7 +41,44 @@ const getMimeTypeFromAssetType = (type: 'video' | 'image' | 'audio') => {
     return 'audio/mpeg';
 };
 
-export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, initialJobId }) => {
+const formatAgentStatus = (status: string) => {
+    switch (status) {
+        case 'transcribing':
+            return 'Transcribing';
+        case 'analyzing':
+            return 'Analyzing';
+        case 'completed':
+            return 'Completed';
+        case 'queued':
+            return 'Queued';
+        case 'error':
+            return 'Attention';
+        default:
+            return 'Idle';
+    }
+};
+
+const getAgentTone = (status: string) => {
+    if (status === 'transcribing' || status === 'analyzing') {
+        return 'border-primary/30 bg-primary/10 text-primary';
+    }
+
+    if (status === 'completed') {
+        return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500';
+    }
+
+    if (status === 'queued') {
+        return 'border-sky-500/20 bg-sky-500/10 text-sky-400';
+    }
+
+    if (status === 'error') {
+        return 'border-red-500/20 bg-red-500/10 text-red-400';
+    }
+
+    return 'border-slate-200 bg-white text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400';
+};
+
+export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, initialProjectId }) => {
     // Current Step: 'details' -> 'uploading' -> 'ingest' -> 'completed'
     const [step, setStep] = useState<'details' | 'uploading' | 'ingest' | 'completed'>('details');
     
@@ -57,19 +94,19 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     const [uploadStatus, setUploadStatus] = useState('');
 
     // Active Project Tracking
-    const [activeProjectId, setActiveProjectId] = useState<string | null>(initialJobId || null);
+    const [activeProjectId, setActiveProjectId] = useState<string | null>(initialProjectId || null);
     
     // Mutations
     const createProjectMutation = useCreateCFProject();
     const startIngestionMutation = useStartIngestion();
 
     // Polling Status (only active if activeProjectId is set)
-    const { data: projectPayload } = useProjectPayload(activeProjectId || undefined);
+    const { data: projectPayload, isFetched: isProjectPayloadFetched } = useProjectPayload(activeProjectId || undefined);
 
     // Initialization check for directly viewing a job
     useEffect(() => {
-        if (initialJobId) {
-            setActiveProjectId(initialJobId);
+        if (initialProjectId) {
+            setActiveProjectId(initialProjectId);
             setStep('ingest');
         } else {
             // Reset state
@@ -80,7 +117,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             setUploadProgress(0);
             setActiveProjectId(null);
         }
-    }, [initialJobId]);
+    }, [initialProjectId]);
 
     // Background job state monitoring
     useEffect(() => {
@@ -94,6 +131,20 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             }
         }
     }, [projectPayload]);
+
+    useEffect(() => {
+        if (!activeProjectId || !isProjectPayloadFetched || projectPayload) {
+            return;
+        }
+
+        setUploadStatus('This repository session could not be found. Start a new repository pass.');
+        setStep('details');
+        setActiveProjectId(null);
+
+        if (window.location.pathname.startsWith('/create-repo/')) {
+            onNavigate('create-repo');
+        }
+    }, [activeProjectId, isProjectPayloadFetched, onNavigate, projectPayload]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
@@ -189,6 +240,22 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     const selectedVideoCount = selectedFiles.filter((file) => file.type.startsWith('video')).length;
     const selectedAudioCount = selectedFiles.filter((file) => file.type.startsWith('audio')).length;
     const selectedImageCount = selectedFiles.filter((file) => file.type.startsWith('image')).length;
+    const persistedVideoCount = projectPayload?.assets?.filter((asset: any) => String(asset.type || '').startsWith('video')).length || 0;
+    const activeVideoCount = selectedVideoCount || persistedVideoCount;
+    const targetAgentCount = Math.min(4, activeVideoCount || stagedFileCount || 0);
+    const liveAgentPool = Array.from({ length: 4 }, (_, index) => {
+        const liveAgent = projectPayload?.liveAgents?.find((agent: any) => agent.slot === index + 1);
+        if (liveAgent) {
+            return liveAgent;
+        }
+
+        return {
+            slot: index + 1,
+            status: index < targetAgentCount ? 'queued' : 'idle',
+            assetName: null,
+            completedCount: 0,
+        };
+    });
     const currentProgress = step === 'uploading'
         ? uploadProgress
         : (projectPayload?.liveProgress || projectPayload?.activeJob?.progress || 0);
@@ -465,7 +532,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                                             <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">
                                                 {step === 'uploading'
                                                     ? 'Trem is pushing your staged files into the repository one by one.'
-                                                    : 'The ingestion workflow is extracting the first semantic pass and writing artifacts back to storage.'}
+                                                    : 'Up to four Trem agents work the video queue in parallel. When there are more than four videos, the first agents to finish automatically pick up the remaining files while unused slots stay idle.'}
                                             </p>
                                         </div>
                                         <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-primary">
@@ -499,6 +566,50 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                                             <div className="mt-2 truncate text-sm font-medium text-slate-900 dark:text-white">
                                                 {projectPayload?.project?.name || repoName || 'Initializing repository'}
                                             </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-5 rounded-[24px] border border-slate-200 bg-white/80 p-4 dark:border-border-dark dark:bg-surface-card/70">
+                                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                            <div>
+                                                <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Agent Pool</div>
+                                                <div className="mt-2 text-sm text-slate-500 dark:text-gray-400">
+                                                    {targetAgentCount > 0
+                                                        ? `${targetAgentCount} of 4 agents currently needed for this source set.`
+                                                        : 'Agent slots will activate as soon as videos enter the queue.'}
+                                                </div>
+                                            </div>
+                                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-background-dark dark:text-gray-400">
+                                                {activeVideoCount} video{activeVideoCount === 1 ? '' : 's'} in rotation
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                            {liveAgentPool.map((agent: any) => (
+                                                <div
+                                                    key={agent.slot}
+                                                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-border-dark dark:bg-background-dark/50"
+                                                >
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div>
+                                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
+                                                                Agent {String(agent.slot).padStart(2, '0')}
+                                                            </div>
+                                                            <div className="mt-2 text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                                {agent.assetName || 'Standing by'}
+                                                            </div>
+                                                        </div>
+                                                        <div className={`rounded-full border px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.18em] ${getAgentTone(agent.status)}`}>
+                                                            {formatAgentStatus(agent.status)}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-gray-400">
+                                                        <span>Completed</span>
+                                                        <span className="font-mono text-slate-700 dark:text-slate-200">{agent.completedCount || 0}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 </div>
