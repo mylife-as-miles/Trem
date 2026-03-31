@@ -1,12 +1,13 @@
 {
   "name": "trem-ai-worker",
+  "account_id": "8536846bc4a891d653a790969f687ac3",
   "main": "src/index.ts",
   "compatibility_date": "2024-12-24",
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "trem-ai-db",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "5fdd6cce-3e64-4c0c-bb62-0fae22cb3cca"
     }
   ],
   "r2_buckets": [
@@ -33,7 +34,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_classes": ["ProjectCoordinatorDO"]
+      "new_sqlite_classes": ["ProjectCoordinatorDO"]
     }
   ]
 }

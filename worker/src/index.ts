@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { AwsClient } from 'aws4fetch';
 
 export { ProjectCoordinatorDO } from './durable-objects/project-coordinator';
 export { IngestionWorkflow } from './workflows/ingestion-workflow';
@@ -10,12 +9,6 @@ type Env = {
   BUCKET: R2Bucket;
   PROJECT_COORDINATOR: DurableObjectNamespace;
   INGESTION_WORKFLOW: any; // Workflow API
-
-  // R2 Credentials for AWS SDK (v4 signing)
-  R2_ACCESS_KEY_ID: string;
-  R2_SECRET_ACCESS_KEY: string;
-  R2_ACCOUNT_ID: string;
-  R2_BUCKET_NAME: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -79,27 +72,38 @@ app.post('/api/projects/:projectId/assets', async (c) => {
     "INSERT INTO assets (id, project_id, name, type, storage_key) VALUES (?, ?, ?, ?, ?)"
   ).bind(id, projectId, name, type, storageKey).run();
 
-  // Generate R2 presigned URL for upload via aws4fetch
-  const aws = new AwsClient({
-      accessKeyId: c.env.R2_ACCESS_KEY_ID || 'mock',
-      secretAccessKey: c.env.R2_SECRET_ACCESS_KEY || 'mock',
-      service: 's3',
-      region: 'auto',
-  });
-
-  const url = new URL(`https://${c.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${c.env.R2_BUCKET_NAME || 'trem-ai-assets'}/${storageKey}`);
-  url.searchParams.set('X-Amz-Expires', '3600'); // 1 hour
-
-  const signedRequest = await aws.sign(url, {
-      method: 'PUT',
-      aws: { signQuery: true }
-  });
-
-  const uploadUrl = signedRequest.url;
+  // Route uploads through the Worker so the frontend does not need R2 signing credentials.
+  const origin = new URL(c.req.url).origin;
+  const uploadUrl = `${origin}/api/assets/${id}/upload`;
 
   const asset = await c.env.DB.prepare("SELECT * FROM assets WHERE id = ?").bind(id).first();
 
   return c.json({ asset, uploadUrl });
+});
+
+app.put('/api/assets/:id/upload', async (c) => {
+  const id = c.req.param('id');
+  const asset = await c.env.DB.prepare(
+    "SELECT id, storage_key FROM assets WHERE id = ?"
+  ).bind(id).first<{ id: string; storage_key: string | null }>();
+
+  if (!asset || !asset.storage_key) {
+    return c.json({ error: 'Asset not found' }, 404);
+  }
+
+  const body = await c.req.raw.arrayBuffer();
+  if (body.byteLength === 0) {
+    return c.json({ error: 'Upload body is empty' }, 400);
+  }
+
+  const contentType = c.req.header('content-type') || 'application/octet-stream';
+  await c.env.BUCKET.put(asset.storage_key, body, {
+    httpMetadata: {
+      contentType,
+    },
+  });
+
+  return c.json({ success: true });
 });
 
 app.post('/api/assets/:id/uploaded', async (c) => {
