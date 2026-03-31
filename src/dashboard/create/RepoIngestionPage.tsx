@@ -142,6 +142,9 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
 
     const stats = getStats();
     const totalSelectedSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+    const persistedAssetSize = projectPayload?.assets?.reduce((sum: number, asset: any) => sum + (asset.size || asset.file_size || 0), 0) || 0;
+    const stagedFileCount = selectedFiles.length || projectPayload?.assets?.length || 0;
+    const stagedFileSize = totalSelectedSize || persistedAssetSize;
     const selectedVideoCount = selectedFiles.filter((file) => file.type.startsWith('video')).length;
     const selectedAudioCount = selectedFiles.filter((file) => file.type.startsWith('audio')).length;
     const selectedImageCount = selectedFiles.filter((file) => file.type.startsWith('image')).length;
@@ -207,11 +210,11 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                         <div className="flex flex-wrap justify-center gap-2 pt-2">
                             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
                                 <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
-                                {selectedFiles.length} queued files
+                                {stagedFileCount} queued files
                             </div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
                                 <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
-                                {formatFileSize(totalSelectedSize)} source volume
+                                {formatFileSize(stagedFileSize)} source volume
                             </div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium capitalize text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
                                 <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
@@ -440,7 +443,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                                         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
                                             <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Queued Files</div>
                                             <div className="mt-2 text-2xl font-display font-bold tracking-tight text-slate-900 dark:text-white">
-                                                {selectedFiles.length || projectPayload?.assets?.length || 0}
+                                                {stagedFileCount}
                                             </div>
                                         </div>
                                         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
@@ -573,11 +576,11 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                                 <div className="grid gap-3">
                                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
                                         <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Files</div>
-                                        <div className="mt-2 text-xl font-display font-bold tracking-tight text-slate-900 dark:text-white">{selectedFiles.length}</div>
+                                        <div className="mt-2 text-xl font-display font-bold tracking-tight text-slate-900 dark:text-white">{stagedFileCount}</div>
                                     </div>
                                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
                                         <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Volume</div>
-                                        <div className="mt-2 text-xl font-display font-bold tracking-tight text-slate-900 dark:text-white">{formatFileSize(totalSelectedSize)}</div>
+                                        <div className="mt-2 text-xl font-display font-bold tracking-tight text-slate-900 dark:text-white">{formatFileSize(stagedFileSize)}</div>
                                     </div>
                                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
                                         <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Workflow</div>
