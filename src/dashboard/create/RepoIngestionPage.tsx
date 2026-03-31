@@ -137,13 +137,12 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             return;
         }
 
-        setUploadStatus('This repository session could not be found. Start a new repository pass.');
-        setStep('details');
-        setActiveProjectId(null);
-
-        if (window.location.pathname.startsWith('/create-repo/')) {
-            onNavigate('create-repo');
-        }
+        setUploadStatus('This repository session could not be found or failed to load.');
+        // Don't auto-redirect, let user see the error
+        // setActiveProjectId(null);
+        // if (window.location.pathname.startsWith('/create-repo/')) {
+        //     onNavigate('create-repo');
+        // }
     }, [activeProjectId, isProjectPayloadFetched, onNavigate, projectPayload]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
