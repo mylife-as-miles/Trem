@@ -186,155 +186,281 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     }
 
     return (
-        <div className="flex flex-col h-full overflow-hidden bg-black text-white selection:bg-primary selection:text-black font-mono">
-            <TopNavigation onNavigate={onNavigate} />
-            <div className="flex-1 overflow-hidden p-8">
-                <div className="max-w-6xl mx-auto w-full flex flex-col h-full">
-
-                    {/* Header */}
-                    <header className="mb-8 flex items-center justify-between">
-                        <div>
-                            <h1 className="text-3xl font-display font-bold tracking-tight text-slate-900 dark:text-white">Create Semantic Repository</h1>
-                            <p className="text-slate-500 dark:text-slate-400 mt-2">Powered by Cloudflare Workflows & D1</p>
+        <div className="flex h-full flex-col overflow-hidden bg-slate-50 text-slate-900 selection:bg-primary selection:text-black dark:bg-background-dark dark:text-white">
+            <TopNavigation onNavigate={onNavigate} activeTab="create" />
+            <main className="flex-1 overflow-y-auto bg-slate-50/50 p-6 dark:bg-background-dark md:p-10">
+                <div className="mx-auto flex w-full max-w-6xl flex-col space-y-10 pb-10">
+                    <div className="space-y-6 py-8 text-center md:py-12">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium tracking-wide text-emerald-600 dark:text-primary">
+                            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse"></span>
+                            CLOUDFLARE REPOSITORY INGESTION
                         </div>
-                        <div className="flex items-center gap-2">
-                            <div className={`w-3 h-3 rounded-full ${step === 'details' ? 'bg-primary' : 'bg-primary/30'}`}></div>
-                            <div className="w-8 h-px bg-slate-300 dark:bg-white/10"></div>
-                            <div className={`w-3 h-3 rounded-full ${step === 'uploading' || step === 'ingest' ? 'bg-primary' : 'bg-primary/30'}`}></div>
-                            <div className="w-8 h-px bg-slate-300 dark:bg-white/10"></div>
-                            <div className={`w-3 h-3 rounded-full ${step === 'completed' ? 'bg-primary' : 'bg-primary/30'}`}></div>
-                        </div>
-                    </header>
 
-                    {/* Form Content */}
-                    <div className="flex-1 overflow-y-auto space-y-10">
+                        <h1 className="text-5xl font-display font-bold tracking-tight text-slate-900 dark:text-white md:text-7xl">
+                            Create a <span className="text-primary">semantic repo</span>
+                        </h1>
+
+                        <p className="mx-auto max-w-2xl text-lg font-light leading-relaxed text-slate-500 dark:text-gray-400 md:text-xl">
+                            Stage the brief, upload the source media, and let Trem initialize the repository before you move into the workspace.
+                        </p>
+
+                        <div className="flex flex-wrap justify-center gap-2 pt-2">
+                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                {selectedFiles.length} queued files
+                            </div>
+                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                {formatFileSize(totalSelectedSize)} source volume
+                            </div>
+                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium capitalize text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                {currentWorkflowLabel}
+                            </div>
+                        </div>
+                    </div>
+
+                    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white/75 shadow-xl dark:border-border-dark dark:bg-surface-card/85">
+                        <div className="flex flex-col gap-5 border-b border-slate-200/70 bg-slate-50/70 px-5 py-5 dark:border-border-dark dark:bg-background-dark/50 md:px-6">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                                <div className="max-w-2xl">
+                                    <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Repository Workflow</h2>
+                                    <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                        Keep the setup calm and explicit: define the repository, stage the source set, then monitor the workflow until artifacts are ready.
+                                    </p>
+                                </div>
+                                <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                    {activeProjectId ? `Project ${activeProjectId.slice(0, 8)}` : 'No live project yet'}
+                                </div>
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-3">
+                                {journeySteps.map((item, index) => (
+                                    <div
+                                        key={item.key}
+                                        className={`rounded-2xl border px-4 py-4 transition-colors ${item.active ? 'border-primary/40 bg-primary/10' : item.complete ? 'border-slate-200 bg-white dark:border-border-dark dark:bg-surface-card' : 'border-slate-200/80 bg-white/70 dark:border-border-dark dark:bg-background-dark/30'}`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm font-display font-bold ${item.active ? 'border-primary bg-primary text-black' : item.complete ? 'border-primary/40 bg-primary/10 text-primary' : 'border-slate-200 bg-slate-100 text-slate-500 dark:border-border-dark dark:bg-background-dark dark:text-gray-400'}`}>
+                                                {index + 1}
+                                            </div>
+                                            <div>
+                                                <div className="text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">{item.label}</div>
+                                                <div className="mt-1 text-xs leading-5 text-slate-500 dark:text-gray-400">{item.description}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="grid gap-6 p-5 md:p-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+                            <div className="space-y-8">
 
                         {/* Step 1: Repo Details */}
                         <section className={`transition-opacity duration-300 ${step !== 'details' && 'hidden'}`}>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                <div className="space-y-4">
-                                    <label className="block text-sm font-mono text-slate-500 dark:text-gray-400 font-bold uppercase tracking-wider">Repository Name</label>
-                                    <input
-                                        type="text"
-                                        value={repoName}
-                                        onChange={(e) => setRepoName(e.target.value)}
-                                        placeholder="e.g., nike-commercial-q3"
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-4 text-xl font-display text-white focus:border-primary focus:outline-none transition-colors placeholder-zinc-500"
-                                    />
-                                </div>
-                                <div className="space-y-4">
-                                    <label className="block text-sm font-mono text-slate-500 dark:text-gray-400 font-bold uppercase tracking-wider">
-                                        Creative Brief
-                                    </label>
-                                    <textarea
-                                        value={repoBrief}
-                                        onChange={(e) => setRepoBrief(e.target.value)}
-                                        placeholder="Describe the goals, tone, and visual style..."
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-4 font-mono text-sm h-32 text-white focus:border-primary focus:outline-none transition-colors resize-none placeholder-zinc-500"
-                                    />
-                                </div>
-                            </div>
-                            
-                            <div className="mt-8">
-                                <h2 className="text-lg font-bold font-display text-slate-900 dark:text-white mb-4">
-                                    Source Media
-                                </h2>
-                                <input 
-                                    type="file" 
-                                    multiple 
-                                    className="hidden" 
-                                    ref={fileInputRef} 
-                                    onChange={handleFileChange} 
-                                    accept="video/*,audio/*,image/*" 
-                                />
-                                
-                                {selectedFiles.length === 0 ? (
-                                    <div
-                                        onClick={() => fileInputRef.current?.click()}
-                                        className="border-2 border-dashed border-zinc-800 rounded-2xl h-48 flex flex-col items-center justify-center gap-4 bg-transparent hover:border-primary/50 cursor-pointer transition-colors"
-                                    >
-                                        <span className="material-icons-outlined text-4xl text-zinc-600">cloud_upload</span>
-                                        <p className="font-mono text-sm text-zinc-600">
-                                            Click to select raw footage or audio files
+                            <div className="space-y-8">
+                                <div className="grid gap-6 md:grid-cols-2">
+                                    <div className="space-y-3">
+                                        <label className="block text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-gray-500">Repository Name</label>
+                                        <input
+                                            type="text"
+                                            value={repoName}
+                                            onChange={(e) => setRepoName(e.target.value)}
+                                            placeholder="e.g., nike-commercial-q3"
+                                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-xl font-display tracking-tight text-slate-900 transition-colors placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-dark dark:text-white dark:placeholder:text-gray-500"
+                                        />
+                                        <p className="text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                            Use a short project slug the team will recognize in the workspace and artifact list.
                                         </p>
                                     </div>
-                                ) : (
-                                    <div className="space-y-4">
-                                        <div className="flex gap-4">
-                                            <button 
-                                                onClick={() => fileInputRef.current?.click()}
-                                                className="bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-colors"
-                                            >
-                                                Add More Files
-                                            </button>
-                                            <button 
-                                                onClick={() => setSelectedFiles([])}
-                                                className="bg-transparent border border-red-900/50 text-red-500 hover:bg-red-950/30 px-4 py-2 rounded-lg font-medium text-sm transition-colors"
-                                            >
-                                                Clear All
-                                            </button>
-                                        </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                            {selectedFiles.map((f, i) => (
-                                                <div key={i} className="bg-zinc-900/50 border border-zinc-800 p-3 rounded-lg flex items-center gap-3">
-                                                    <span className="material-icons-outlined text-zinc-500 text-sm">
-                                                        {f.type.startsWith('video') ? 'movie' : f.type.startsWith('audio') ? 'audiotrack' : 'image'}
-                                                    </span>
-                                                    <span className="text-sm truncate text-zinc-300 font-medium flex-1">{f.name}</span>
-                                                    <span className="text-xs text-zinc-600">{(f.size / 1024 / 1024).toFixed(1)}MB</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        
-                                        <div className="mt-8 flex justify-end">
-                                            <button
-                                                onClick={handleCreateProject}
-                                                disabled={!repoName}
-                                                className={`px-6 py-3 rounded-lg font-bold transition-all flex items-center gap-2 
-                                                    ${repoName ? 'bg-primary hover:bg-primary_hover text-black shadow-[0_0_15px_rgba(132,204,22,0.3)]' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}
-                                                `}
-                                            >
-                                                <span className="material-icons-outlined">cloud_upload</span>
-                                                Upload & Ingest to Cloudflare
-                                            </button>
-                                        </div>
+
+                                    <div className="space-y-3">
+                                        <label className="block text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-gray-500">
+                                            Creative Brief
+                                        </label>
+                                        <textarea
+                                            value={repoBrief}
+                                            onChange={(e) => setRepoBrief(e.target.value)}
+                                            placeholder="Describe the goals, tone, references, delivery format, and any constraints..."
+                                            className="h-40 w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm leading-6 text-slate-900 transition-colors placeholder:text-slate-400 focus:border-primary focus:outline-none dark:border-border-dark dark:bg-background-dark dark:text-white dark:placeholder:text-gray-500"
+                                        />
+                                        <p className="text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                            The clearer this brief is, the more useful the first repository pass becomes.
+                                        </p>
                                     </div>
-                                )}
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                                        <div>
+                                            <h3 className="text-lg font-display font-bold tracking-tight text-slate-900 dark:text-white">Source Media</h3>
+                                            <p className="mt-1 text-sm text-slate-500 dark:text-gray-400">
+                                                Bring in the footage, stills, or audio that should seed this repository.
+                                            </p>
+                                        </div>
+                                        {selectedFiles.length > 0 && (
+                                            <div className="flex flex-wrap gap-2">
+                                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-background-dark dark:text-gray-400">
+                                                    {selectedVideoCount} video
+                                                </div>
+                                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-background-dark dark:text-gray-400">
+                                                    {selectedAudioCount} audio
+                                                </div>
+                                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-background-dark dark:text-gray-400">
+                                                    {selectedImageCount} image
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <input
+                                        type="file"
+                                        multiple
+                                        className="hidden"
+                                        ref={fileInputRef}
+                                        onChange={handleFileChange}
+                                        accept="video/*,audio/*,image/*"
+                                    />
+
+                                    {selectedFiles.length === 0 ? (
+                                        <button
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="group flex h-56 w-full flex-col items-center justify-center gap-4 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/70 px-6 text-center transition-all duration-300 hover:-translate-y-0.5 hover:border-primary hover:bg-primary/5 dark:border-border-dark dark:bg-background-dark/40 dark:hover:bg-primary/10"
+                                        >
+                                            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary transition-transform duration-300 group-hover:scale-105">
+                                                <span className="material-icons-outlined text-3xl">cloud_upload</span>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <p className="text-base font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                    Drop in your source set
+                                                </p>
+                                                <p className="mx-auto max-w-md text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                                    Select raw footage, stills, audio, or mixed reference material. Trem will stage everything into one repository pass.
+                                                </p>
+                                            </div>
+                                        </button>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div className="flex flex-wrap gap-3">
+                                                <button
+                                                    onClick={() => fileInputRef.current?.click()}
+                                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all duration-200 ease-out hover:border-primary/40 hover:text-slate-900 active:scale-95 dark:border-border-dark dark:bg-background-dark dark:text-gray-300 dark:hover:text-white"
+                                                >
+                                                    <span className="material-icons-outlined text-base">add</span>
+                                                    Add More Files
+                                                </button>
+                                                <button
+                                                    onClick={() => setSelectedFiles([])}
+                                                    className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 transition-all duration-200 ease-out hover:bg-red-100 active:scale-95 dark:border-red-950/60 dark:bg-red-950/20 dark:text-red-400 dark:hover:bg-red-950/30"
+                                                >
+                                                    <span className="material-icons-outlined text-base">delete_sweep</span>
+                                                    Clear All
+                                                </button>
+                                            </div>
+
+                                            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                                                {selectedFiles.map((file, index) => (
+                                                    <div
+                                                        key={`${file.name}-${index}`}
+                                                        className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-background-dark"
+                                                    >
+                                                        <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                                            <span className="material-icons-outlined text-lg">{getFileIcon(file.type)}</span>
+                                                        </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="truncate text-sm font-medium text-slate-900 dark:text-white">{file.name}</div>
+                                                            <div className="mt-1 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
+                                                                {formatFileSize(file.size)}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4 dark:border-border-dark dark:bg-background-dark/50 lg:flex-row lg:items-center lg:justify-between">
+                                                <div>
+                                                    <div className="text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                        Ready to upload {selectedFiles.length} file{selectedFiles.length === 1 ? '' : 's'}
+                                                    </div>
+                                                    <div className="mt-1 text-sm text-slate-500 dark:text-gray-400">
+                                                        The repository will be created first, then each source asset will stream into the workflow.
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={handleCreateProject}
+                                                    disabled={!repoName}
+                                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 text-sm font-display font-bold tracking-wide transition-all duration-200 ease-out active:scale-95 ${repoName ? 'bg-primary text-black shadow-[0_0_20px_rgba(217,248,95,0.22)] hover:bg-primary_hover' : 'cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-border-dark dark:text-gray-500'}`}
+                                                >
+                                                    <span className="material-icons-outlined text-base">cloud_upload</span>
+                                                    Upload & Ingest
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </section>
 
                         {/* Step 2 & 3: Uploading & Ingestion */}
                         {(step === 'uploading' || step === 'ingest') && (
                             <section className="space-y-6">
-                                <div className="bg-zinc-900/30 border border-zinc-800 rounded-lg p-6 flex flex-col justify-center gap-4">
-                                    <div className="flex justify-between items-center">
-                                        <div className="text-lg font-bold text-white">
-                                            {step === 'uploading' ? 'Uploading Media...' : 'Cloudflare Workflow Running'}
-                                        </div>
-                                        {projectPayload?.activeJob && (
-                                            <div className="text-xs font-mono px-2 py-1 bg-zinc-800 rounded text-amber-400">
-                                                {projectPayload.activeJob.status.toUpperCase()}
+                                <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-6 dark:border-border-dark dark:bg-background-dark/50">
+                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                        <div>
+                                            <div className="text-lg font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                {step === 'uploading' ? 'Uploading source media' : 'Cloudflare workflow running'}
                                             </div>
-                                        )}
+                                            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                                {step === 'uploading'
+                                                    ? 'Trem is pushing your staged files into the repository one by one.'
+                                                    : 'The ingestion workflow is extracting the first semantic pass and writing artifacts back to storage.'}
+                                            </p>
+                                        </div>
+                                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-primary">
+                                            <span className="h-2 w-2 rounded-full bg-primary animate-pulse"></span>
+                                            {(projectPayload?.activeJob?.status || currentWorkflowLabel).toUpperCase()}
+                                        </div>
                                     </div>
-                                    
-                                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                                        <div 
-                                            className="h-full bg-primary shadow-[0_0_10px_rgba(132,204,22,0.5)] transition-all duration-300 ease-out" 
-                                            style={{ width: `${step === 'uploading' ? uploadProgress : (projectPayload?.liveProgress || projectPayload?.activeJob?.progress || 0)}%` }}
+
+                                    <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-border-dark">
+                                        <div
+                                            className="h-full bg-primary shadow-[0_0_14px_rgba(217,248,95,0.35)] transition-all duration-300 ease-out"
+                                            style={{ width: `${currentProgress}%` }}
                                         ></div>
+                                    </div>
+
+                                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Progress</div>
+                                            <div className="mt-2 text-2xl font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                {Math.round(currentProgress)}%
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Queued Files</div>
+                                            <div className="mt-2 text-2xl font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                {selectedFiles.length || projectPayload?.assets?.length || 0}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Project</div>
+                                            <div className="mt-2 truncate text-sm font-medium text-slate-900 dark:text-white">
+                                                {projectPayload?.project?.name || repoName || 'Initializing repository'}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
                                 {/* Terminal Log */}
-                                <div className="bg-[#0c0c0c] border border-zinc-800 rounded-lg p-5 font-mono text-xs h-[400px] overflow-y-auto custom-scrollbar flex flex-col shadow-xl">
-                                    <div className="flex items-center gap-2 text-primary mb-4 border-b border-primary/20 pb-2 sticky top-0 bg-[#0c0c0c] z-10 w-full">
+                                <div className="flex h-[420px] flex-col overflow-y-auto rounded-[24px] border border-slate-200 bg-[#0c0c0c] p-5 font-mono text-xs shadow-xl dark:border-border-dark">
+                                    <div className="sticky top-0 z-10 mb-4 flex w-full items-center gap-2 border-b border-primary/20 bg-[#0c0c0c] pb-2 text-primary">
                                         <span className="material-icons-outlined text-sm">terminal</span>
                                         <span className="font-bold">CLOUD_WORKER_LOGS</span>
                                     </div>
                                     <div className="space-y-2 pb-4">
                                         {simLogs.map((log: string, i: number) => (
-                                            <div key={i} className="text-slate-300 break-words font-mono opacity-90 border-l-2 border-zinc-800 pl-2">
+                                            <div key={i} className="break-words border-l-2 border-zinc-800 pl-2 font-mono text-slate-300 opacity-90">
                                                 {log}
                                             </div>
                                         ))}
