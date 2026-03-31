@@ -177,61 +177,153 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
     const statusLabel = isProcessing ? 'Processing request' : (selectedModeId === 'interactive' ? 'Planning mode' : 'Auto-execute mode');
 
     return (
-        <div className="flex flex-col min-h-full relative fade-in bg-slate-50/50 dark:bg-background-dark font-sans">
+        <div className="relative flex min-h-full flex-col fade-in bg-slate-50/50 font-sans dark:bg-background-dark">
 
-            {/* Header / Breadcrumb Area */}
-            <div className="sticky top-0 z-30 flex items-center justify-between px-6 h-14 bg-slate-50/80 dark:bg-background-dark/80 backdrop-blur-md border-b border-slate-200 dark:border-border-dark">
-                <div className="flex items-center gap-4">
-                    {onBack && (
-                        <button
-                            onClick={onBack}
-                            className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-white/10 transition-colors text-slate-500 dark:text-gray-400"
-                        >
-                            <span className="material-icons-outlined text-lg">arrow_back</span>
-                        </button>
-                    )}
-                    <div className="flex items-center gap-2 text-sm">
-                        <span className="text-slate-500 dark:text-gray-500">Trem Edit</span>
-                        <span className="text-slate-300 dark:text-gray-700">/</span>
-                        <span className="font-semibold text-slate-900 dark:text-white">
-                            {activeRepo.name}
-                        </span>
+            <div className="sticky top-0 z-30 border-b border-slate-200 bg-slate-50/80 backdrop-blur-md dark:border-border-dark dark:bg-background-dark/80">
+                <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-4 md:px-6">
+                    <div className="flex items-center gap-3 md:gap-4">
+                        {onBack && (
+                            <button
+                                onClick={onBack}
+                                className="rounded-xl p-2 text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900 dark:text-gray-400 dark:hover:bg-white/10 dark:hover:text-white"
+                            >
+                                <span className="material-icons-outlined text-lg">arrow_back</span>
+                            </button>
+                        )}
+                        <div className="flex items-center gap-2 text-sm">
+                            <span className="text-slate-500 dark:text-gray-500">Trem Edit</span>
+                            <span className="text-slate-300 dark:text-gray-700">/</span>
+                            <span className="font-semibold text-slate-900 dark:text-white">{activeRepo.name}</span>
+                        </div>
+                    </div>
+
+                    <div className="hidden items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-primary sm:inline-flex">
+                        <span className="h-2 w-2 rounded-full bg-primary animate-pulse"></span>
+                        {statusLabel}
                     </div>
                 </div>
             </div>
 
-            <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-12 w-full max-w-5xl mx-auto">
-                <div className="w-full space-y-8">
+            <div className="flex-1 p-6 md:p-10">
+                <div className="mx-auto w-full max-w-6xl space-y-10">
 
-                    {/* Hero Text */}
-                    <div className="text-center space-y-3">
-                        <h1 className="text-4xl md:text-5xl font-display font-bold text-slate-900 dark:text-white tracking-tight">
-                            How should we edit this?
+                    <div className="space-y-6 py-8 text-center md:py-12">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium tracking-wide text-emerald-600 dark:text-primary">
+                            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse"></span>
+                            AI-POWERED EDIT PLANNING
+                        </div>
+
+                        <h1 className="text-5xl font-display font-bold tracking-tight text-slate-900 dark:text-white md:text-7xl">
+                            How should we <span className="text-primary">edit this?</span>
                         </h1>
-                        <p className="text-lg text-slate-500 dark:text-gray-400 max-w-2xl mx-auto">
-                            Describe your changes, select your repository, and choose your execution mode.
+                        <p className="mx-auto max-w-2xl text-lg font-light leading-relaxed text-slate-500 dark:text-gray-400 md:text-xl">
+                            Shape the edit in natural language, target the right repository, and decide whether Trem should plan with you or execute immediately.
                         </p>
+
+                        <div className="flex flex-wrap justify-center gap-2 pt-2">
+                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                {activeRepo.name}
+                            </div>
+                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                {activeMode.label}
+                            </div>
+                            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:border-border-dark dark:bg-surface-card dark:text-gray-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                {selectedAssetIds.length} attached assets
+                            </div>
+                        </div>
                     </div>
 
-                    {/* Main Command Center Card */}
-                    <div className="relative group w-full max-w-3xl mx-auto">
-
-                        <div className="relative bg-white dark:bg-surface-card border border-slate-200 dark:border-border-dark rounded-2xl shadow-xl flex flex-col min-h-[320px]">
-
-                            {/* Input Area */}
-                            <div className="flex-1 p-6 relative">
-                                <div className="absolute top-6 left-6 text-primary pointer-events-none">
-                                    <span className="material-icons-outlined text-xl">auto_fix_high</span>
+                    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white/75 shadow-xl dark:border-border-dark dark:bg-surface-card/85">
+                        <div className="flex flex-col gap-5 border-b border-slate-200/70 bg-slate-50/70 px-5 py-5 dark:border-border-dark dark:bg-background-dark/50 md:px-6">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                                <div className="max-w-2xl">
+                                    <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Edit Command Center</h2>
+                                    <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                        Keep the brief explicit, pick the right source repository, and decide whether you want a collaborative plan or a direct execution pass.
+                                    </p>
                                 </div>
+                                <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                    {repos.length} repos available
+                                </div>
+                            </div>
 
+                            <div className="flex flex-wrap gap-2">
+                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                    Repo: {activeRepo.name}
+                                </div>
+                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                    Mode: {activeMode.label}
+                                </div>
+                                <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-primary"></span>
+                                    Assets: {selectedAssetIds.length}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid gap-6 p-5 md:p-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+                            <div className="space-y-6">
+
+                    {/* Main Command Center Card */}
+                    <div className="relative w-full">
+
+                        <div className="relative flex min-h-[360px] flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm dark:border-border-dark dark:bg-background-dark/55">
+                            <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(217,248,95,0.12),transparent_68%)]"></div>
+
+                            <div className="relative flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-border-dark md:px-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                                        <span className="material-icons-outlined text-lg">auto_fix_high</span>
+                                    </div>
+                                    <div>
+                                        <div className="text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">Edit Brief</div>
+                                        <div className="mt-1 text-xs text-slate-500 dark:text-gray-400">Describe the edit in the same way you would brief an editor.</div>
+                                    </div>
+                                </div>
+                                <div className="hidden text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500 sm:block">
+                                    Cmd/Ctrl + Enter
+                                </div>
+                            </div>
+
+                            <div className="min-h-[220px] flex-1 px-5 py-5 md:px-6">
                                 <textarea
-                                    className="w-full h-full bg-transparent border-none focus:ring-0 text-xl font-display text-slate-800 dark:text-white placeholder-slate-300 dark:placeholder-zinc-600 resize-none pl-10 p-0 leading-relaxed caret-primary outline-none"
+                                    className="min-h-[180px] w-full resize-none border-none bg-transparent p-0 text-xl font-display leading-relaxed text-slate-800 caret-primary outline-none placeholder:text-slate-300 dark:text-white dark:placeholder:text-zinc-600"
                                     placeholder={displayedPlaceholder}
                                     value={prompt}
                                     onChange={(e) => setPrompt(e.target.value)}
                                     onKeyDown={handleKeyDown}
                                     autoFocus
                                 />
+
+                                {selectedAssetIds.length > 0 && (
+                                    <div className="mt-5 flex flex-wrap gap-2">
+                                        {selectedAssetIds.slice(0, 3).map((id) => (
+                                            <div
+                                                key={id}
+                                                className="flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-primary"
+                                            >
+                                                <span className="material-icons-outlined text-[12px]">video_library</span>
+                                                <span className="max-w-[110px] truncate">Asset {id.slice(0, 4)}</span>
+                                                <button
+                                                    onClick={() => setSelectedAssetIds((prev) => prev.filter((entry) => entry !== id))}
+                                                    className="ml-1 transition-colors hover:text-red-500 dark:hover:text-red-400"
+                                                >
+                                                    <span className="material-icons-outlined block text-[12px]">close</span>
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {selectedAssetIds.length > 3 && (
+                                            <div className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                                +{selectedAssetIds.length - 3} more
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Toolbar / Action Bar */}
