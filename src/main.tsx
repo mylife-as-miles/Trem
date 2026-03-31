@@ -30,23 +30,22 @@ root.render(
     </React.StrictMode>
 );
 
-// Register Service Worker
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js', { scope: '/' })
-            .then(registration => {
-                console.log('SW registered: ', registration);
-            })
-            .catch(registrationError => {
-                console.log('SW registration failed: ', registrationError);
-            });
+// This app no longer ships a service worker, so proactively remove any
+// previously-registered PWA worker and its caches to avoid stale UI shells.
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', async () => {
+        try {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map((registration) => registration.unregister()));
+
+            if ('caches' in window) {
+                const cacheKeys = await caches.keys();
+                await Promise.all(cacheKeys.map((cacheKey) => caches.delete(cacheKey)));
+            }
+
+            console.log('Legacy service workers cleared');
+        } catch (error) {
+            console.warn('Failed to clear legacy service workers', error);
+        }
     });
-}
-// For dev, we might need a different strategy or just rely on Vite's dev server handling it?
-// VitePWA plugin handles dev if `devOptions: { enabled: true }` is set.
-// It usually registers it automatically if `registerType: 'autoUpdate'` is set?
-// Actually, with `injectManifest`, we might need manual registration or use the `virtual:pwa-register` module.
-// Let's use the explicit registration which is safer for our custom logic.
-if ('serviceWorker' in navigator && import.meta.env.DEV) {
-    navigator.serviceWorker.register('/sw.js', { type: 'module' });
 }

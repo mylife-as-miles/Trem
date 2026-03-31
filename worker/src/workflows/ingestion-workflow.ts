@@ -1,5 +1,7 @@
 // @ts-ignore
 import { WorkflowEntrypoint, WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import mime from 'mime';
 
 type Env = {
   DB: D1Database;
@@ -22,6 +24,7 @@ type AssetRow = {
   storage_key: string | null;
   metadata: string | null;
   size: number | null;
+  duration?: number;
 };
 
 type AssetMetadata = {
@@ -185,7 +188,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
                 throw new Error(`Asset not found in R2: ${asset.storage_key}`);
               }
 
-              const mimeType = object.httpMetadata?.contentType || inferMimeType(asset.name, asset.type);
+              const mimeType = object.httpMetadata?.contentType || (mime.getType(asset.name) || 'application/octet-stream');
               const size = object.size;
               const fileBuffer = await object.arrayBuffer();
 
@@ -224,11 +227,6 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
 
                   await insertEventLog(`Agent ${agent.slot} completed transcription for ${asset.name}`);
                 }
-              } else if (isMediaWithAudio(mimeType) && size > MAX_TRANSCRIBE_BYTES) {
-                await insertEventLog(
-                  `Skipped transcription for ${asset.name} (${(size / 1024 / 1024).toFixed(1)}MB exceeds limit)`,
-                  'warn'
-                );
               }
 
               agent.status = 'analyzing';
@@ -338,7 +336,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
 
         if (processedAssets.length === 0) {
           await insertEventLog('No assets were successfully processed', 'warn');
-          return { summary: 'No assets available for synthesis.', scenes: [], timeline: {} };
+          return null;
         }
 
         // Build aggregated context
@@ -357,21 +355,33 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
           .filter(Boolean)
           .join('\n\n');
 
+        const durationSeconds = 0; // Estimation
+
         if (!this.env.GEMINI_API_KEY) {
           return {
-            summary: `Processed ${processedAssets.length} asset(s). Gemini API key not configured.`,
-            scenes: generateFallbackScenes(processedAssets),
+            repo: {
+              name: `project-${projectId.slice(0, 8)}`,
+              brief: `Processed ${processedAssets.length} asset(s). Gemini API key not configured.`,
+              created: Date.now(),
+              version: '1.0.0',
+              pipeline: 'trem-video-pipeline-v2'
+            },
+            scenes: { scenes: generateFallbackScenes(processedAssets) },
             timeline: generateFallbackTimeline(processedAssets),
-            transcript: fullTranscript,
+            captions_srt: '',
+            metadata: { video_md: '# Repository Overview\n\nGemini API not configured.', scenes_md: '' },
+            commit: { id: '0001', message: 'feat: fallback ingest' }
           };
         }
 
-        // Use Gemini to generate structured repo output
         const repoStructure = await generateRepoWithGemini(
           this.env.GEMINI_API_KEY,
-          assetContext,
-          fullTranscript,
-          processedAssets
+          {
+            duration: `${durationSeconds}s`,
+            transcript: fullTranscript,
+            assetContext,
+            projectId
+          }
         );
 
         await insertEventLog(`Repository synthesis complete`);
@@ -382,58 +392,33 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
       // Step 4: GENERATE ARTIFACTS (write to R2 + register in D1)
       // ============================================================
       await step.do('generate_artifacts', async () => {
+        if (!synthesis) return;
         await logProgress('Generating repository artifacts...', 85, 'generating_artifacts');
 
-        // R2 artifact keys are stable per project, so keep D1 in sync by
-        // replacing the prior artifact rows on each fresh ingest.
         await this.env.DB.prepare(
           "DELETE FROM artifacts WHERE project_id = ?"
         ).bind(projectId).run();
 
-        // Get project info
-        const project = await this.env.DB.prepare(
-          "SELECT name, brief FROM projects WHERE id = ?"
-        ).bind(projectId).first<{ name: string; brief: string }>();
+        await storeArtifact(this.env, projectId, jobId, 'repo.json', synthesis.repo || {});
+        await storeArtifact(this.env, projectId, jobId, 'scenes.json', synthesis.scenes || {});
+        await storeArtifact(this.env, projectId, jobId, 'main.otio.json', synthesis.timeline || {});
 
-        const projectName = project?.name || 'Untitled';
-        const projectBrief = project?.brief || '';
+        if (synthesis.captions_srt) {
+          await storeArtifactRaw(this.env, projectId, jobId, 'captions.srt', synthesis.captions_srt, 'text/plain');
+        }
+        if (synthesis.metadata?.video_md) {
+          await storeArtifactRaw(this.env, projectId, jobId, 'video.md', synthesis.metadata.video_md, 'text/markdown');
+        }
+        if (synthesis.metadata?.scenes_md) {
+          await storeArtifactRaw(this.env, projectId, jobId, 'scenes.md', synthesis.metadata.scenes_md, 'text/markdown');
+        }
+        if (synthesis.commit) {
+          await storeArtifact(this.env, projectId, jobId, '0001.json', synthesis.commit);
+        }
+        if (synthesis.dag) {
+          await storeArtifact(this.env, projectId, jobId, 'ingest.json', synthesis.dag);
+        }
 
-        // ---- repo.json ----
-        const repoJson = {
-          name: projectName,
-          brief: projectBrief,
-          version: '1.0.0',
-          pipeline: 'trem-video-pipeline-v2',
-          created: Date.now(),
-          summary: synthesis.summary,
-          assetCount: processedAssets.length,
-          assets: processedAssets.map(a => ({
-            id: a.id,
-            name: a.name,
-            type: a.type,
-            description: a.metadata.description,
-            tags: a.metadata.tags,
-          })),
-        };
-        await storeArtifact(this.env, projectId, jobId, 'repo.json', repoJson);
-
-        // ---- scenes.json ----
-        const scenesJson = {
-          projectId,
-          generatedAt: Date.now(),
-          scenes: synthesis.scenes || [],
-        };
-        await storeArtifact(this.env, projectId, jobId, 'scenes.json', scenesJson);
-
-        // ---- main.otio.json ----
-        const otioJson = {
-          version: '1.0',
-          projectId,
-          timeline: synthesis.timeline || {},
-        };
-        await storeArtifact(this.env, projectId, jobId, 'main.otio.json', otioJson);
-
-        // ---- graph.json ----
         const graphJson = {
           projectId,
           nodes: processedAssets.map(a => ({
@@ -446,7 +431,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
         };
         await storeArtifact(this.env, projectId, jobId, 'graph.json', graphJson);
 
-        await insertEventLog(`Generated 4 repository artifacts`);
+        await insertEventLog(`Generated intelligence artifacts (OTIO, Commits, Metadata)`);
       });
 
       // ============================================================
@@ -472,7 +457,6 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
           "UPDATE jobs SET status = 'completed', progress = 100, completed_at = ? WHERE id = ?"
         ).bind(Math.floor(Date.now() / 1000), jobId).run();
 
-        // Unlock coordinator
         const doId = this.env.PROJECT_COORDINATOR.idFromName(projectId);
         const stub = this.env.PROJECT_COORDINATOR.get(doId);
         await stub.fetch(new Request('http://do/unlock', { method: 'POST' }));
@@ -480,56 +464,48 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
     } catch (error) {
       await step.do('handle_error', async () => {
         const message = error instanceof Error ? error.message : String(error);
-
         await insertEventLog(`Workflow failed: ${message}`, 'error');
-
         await this.env.DB.prepare(
           "UPDATE projects SET status = 'failed', updated_at = ? WHERE id = ?"
         ).bind(Math.floor(Date.now() / 1000), projectId).run();
-
         await this.env.DB.prepare(
           "UPDATE jobs SET status = 'failed', error = ? WHERE id = ?"
         ).bind(message, jobId).run();
-
         await updateCoordinator(0, `Failed: ${message}`, 'failed');
-
         const doId = this.env.PROJECT_COORDINATOR.idFromName(projectId);
         const stub = this.env.PROJECT_COORDINATOR.get(doId);
         await stub.fetch(new Request('http://do/unlock', { method: 'POST' }));
       });
-
       throw error;
     }
   }
 }
 
 // ============================================================
-// HELPER: Store artifact in R2 + register in D1
+// ARTIFACT HELPERS
 // ============================================================
 
 async function storeArtifact(env: Env, projectId: string, jobId: string, name: string, data: any) {
   const content = JSON.stringify(data, null, 2);
   const storageKey = `projects/${projectId}/artifacts/${name}`;
-
-  await env.BUCKET.put(storageKey, content, {
-    httpMetadata: { contentType: 'application/json' }
-  });
+  await env.BUCKET.put(storageKey, content, { httpMetadata: { contentType: 'application/json' } });
 
   await env.DB.prepare(
     "INSERT INTO artifacts (id, project_id, job_id, name, storage_key, content_type, size) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).bind(
-    crypto.randomUUID(),
-    projectId,
-    jobId,
-    name,
-    storageKey,
-    'application/json',
-    content.length
-  ).run();
+  ).bind(crypto.randomUUID(), projectId, jobId, name, storageKey, 'application/json', content.length).run();
+}
+
+async function storeArtifactRaw(env: Env, projectId: string, jobId: string, name: string, content: string, contentType: string) {
+  const storageKey = `projects/${projectId}/artifacts/${name}`;
+  await env.BUCKET.put(storageKey, content, { httpMetadata: { contentType } });
+
+  await env.DB.prepare(
+    "INSERT INTO artifacts (id, project_id, job_id, name, storage_key, content_type, size) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(crypto.randomUUID(), projectId, jobId, name, storageKey, contentType, content.length).run();
 }
 
 // ============================================================
-// Fallback generators (when Gemini unavailable)
+// FALLBACKS
 // ============================================================
 
 function generateFallbackScenes(assets: Array<{ id: string; name: string; type: string; metadata: AssetMetadata }>) {
@@ -556,218 +532,218 @@ function generateFallbackTimeline(assets: Array<{ id: string; name: string; type
 }
 
 // ============================================================
-// Gemini: Generate structured repo output
+// GEMINI SDK INTEGRATION (PRO 3.1)
 // ============================================================
 
 async function generateRepoWithGemini(
   apiKey: string,
-  assetContext: string,
-  transcript: string,
-  assets: Array<{ id: string; name: string; type: string; metadata: AssetMetadata }>
-): Promise<{ summary: string; scenes: any[]; timeline: any; transcript?: string }> {
-  const prompt = [
-    'You are generating a structured video repository analysis.',
-    'Given the following media assets and their metadata, generate a JSON object with:',
-    '1. "summary": A 2-3 sentence project summary',
-    '2. "scenes": An array of detected scenes, each with {id, label, description, assetId, startTime?, endTime?}',
-    '3. "timeline": A simple timeline with {tracks: [{name, items: [{assetId, name, startFrame, endFrame}]}]}',
-    '',
-    'Return ONLY valid JSON. No markdown fences.',
-    '',
-    '--- Asset Context ---',
-    assetContext,
-    '',
-    transcript ? `--- Full Transcript ---\n${transcript.slice(0, 2000)}` : '',
-  ].filter(Boolean).join('\n');
+  context: {
+    duration: string;
+    transcript: string;
+    assetContext: string;
+    projectId: string;
+  }
+): Promise<any> {
+  const ai = new GoogleGenAI({ apiKey });
+  
+  const prompt = `
+# Identity
+You are Trem, a highly advanced Video Intelligence Engine designed for the Trem AI video editing platform. Your purpose is to analyze video content and generate a comprehensive, AI-native repository structure that enables intelligent video editing workflows.
 
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+## Core Capabilities
+You excel at:
+- **Scene Detection**: Identifying visual and audio scene boundaries with frame-level precision.
+- **Content Analysis**: Understanding narrative structure, emotional arcs, and visual composition.
+- **Metadata Generation**: Creating rich, structured metadata for downstream AI agents.
+
+---
+
+# Inputs
+- **Video Duration**: ${context.duration}
+- **Audio Transcript**: ${context.transcript || 'Not available'}
+- **Scene Boundaries**: Inferred from analysis
+- **Asset Context**: ${context.assetContext}
+- **Visual Context**: Visual features and temporal coherence inferred from asset metadata and transcript.
+
+---
+
+# Robustness & Error Handling
+- **Missing Duration**: If duration is unknown, estimate it based on the transcript length (approx. 150 words/min) or visual cues.
+- **Missing Transcript**: If no transcript is provided, rely entirely on visual scene detection.
+- **Ambiguity**: If a scene boundary is unclear, choose the most likely cut point and lower the confidence score.
+- **Fail-Safe**: If detection fails completely for a segment, create a single "General Scene" covering that duration.
+
+---
+
+# Strict Ontology / Taxonomy
+You must strictly adhere to these values for metadata fields to ensure downstream compatibility:
+- **Emotion**: [joy, sadness, tension, calm, fear, anger, surprise, neutral]
+- **Shot Type**: [extreme-wide, wide, medium, close-up, extreme-close-up]
+- **Motion**: [static, pan, tilt, zoom, dolly, truck, handheld]
+
+# Versioning & State Evolution
+- **Commit History**: Generate a new commit ID (e.g., 0001) for this ingestion.
+- **State Diffing**: Only update files that have changed.
+- **Message**: Commit messages must describe the *change* (e.g., "feat: initial ingestion of ${context.projectId}").
+
+---
+
+# Tasks
+1. Generate scenes/scenes.json
+2. Generate captions/captions.srt
+3. Generate metadata/video.md
+4. Generate metadata/scenes.md
+5. Generate timeline/base.otio.json (Valid OTIO Schema)
+6. Generate dag/ingest.json
+7. Generate commits/0001.json
+8. Generate repo.json
+
+# Output Schema (Strict JSON)
+You MUST output ONLY valid JSON matching this exact structure. No markdown, no commentary.
+
+{
+  "provenance": {
+    "model": "gemini-3.1-pro-preview",
+    "timestamp": "${new Date().toISOString()}",
+    "input_hash": "${context.projectId}",
+    "agent_version": "trem-core-v3"
+  },
+  "confidence": 0.0,
+  "detection_method": "reasoning-analysis",
+  "repo": {
+    "name": "project-${context.projectId}",
+    "brief": "string (1-2 sentence video summary)",
+    "created": ${Date.now()},
+    "version": "1.0.0",
+    "pipeline": "trem-video-pipeline-v2"
+  },
+  "scenes": {
+    "scenes": [
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json' },
-        }),
+        "id": "scene-001",
+        "start": 0.0,
+        "end": 0.0,
+        "summary": "string (concise visual description)",
+        "emotion": "string (from ontology)",
+        "shot_type": "string (from ontology)",
+        "motion": "string (from ontology)",
+        "audio_cues": ["string"],
+        "characters": ["string"],
+        "visual_notes": ["string"],
+        "confidence": 1.0,
+        "agent_annotations": {}
       }
-    );
-
-    if (!res.ok) {
-      throw new Error(`Gemini synthesis failed: ${res.status}`);
+    ]
+  },
+  "captions_srt": "string (valid SRT format)",
+  "metadata": {
+    "video_md": "string (Markdown video overview)",
+    "scenes_md": "string (Markdown scene-by-scene breakdown)"
+  },
+  "timeline": {
+    "OTIO_SCHEMA": "OpenTimelineIO.v1",
+    "tracks": {
+        "children": [
+            {
+                "OTIO_SCHEMA": "Track.v1",
+                "kind": "Video",
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.v1",
+                        "name": "Clip_001",
+                        "source_range": {
+                          "start_time": { "value": 0, "rate": 30.0 },
+                          "duration": { "value": 0, "rate": 30.0 }
+                        }
+                    }
+                ]
+            }
+        ]
     }
-
-    const data = await res.json() as any;
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const parsed = extractFirstJsonObject(text);
-
-    return {
-      summary: parsed?.summary || `Processed ${assets.length} asset(s)`,
-      scenes: Array.isArray(parsed?.scenes) ? parsed.scenes : generateFallbackScenes(assets),
-      timeline: parsed?.timeline || generateFallbackTimeline(assets),
-      transcript,
-    };
-  } catch (err) {
-    return {
-      summary: `Processed ${assets.length} asset(s). Gemini synthesis failed.`,
-      scenes: generateFallbackScenes(assets),
-      timeline: generateFallbackTimeline(assets),
-      transcript,
-    };
+  },
+  "dag": {},
+  "commit": {
+    "id": "0001",
+    "parent": null,
+    "timestamp": "${new Date().toISOString()}",
+    "message": "feat: ingest ${context.projectId}",
+    "state": {
+      "timeline": "timeline/base.otio.json",
+      "scenes": "scenes/scenes.json",
+      "captions": "captions/captions.srt",
+      "metadata": [
+        "metadata/video.md",
+        "metadata/scenes.md"
+      ],
+      "dag": "dag/ingest.json"
+    },
+    "hashtags": ["#tag1", "#tag2"]
   }
 }
 
-// ============================================================
-// Utility functions
-// ============================================================
+---
 
-const inferMimeType = (name: string, assetType: string): string => {
-  const lowerName = name.toLowerCase();
-  if (lowerName.endsWith('.mp3')) return 'audio/mpeg';
-  if (lowerName.endsWith('.wav')) return 'audio/wav';
-  if (lowerName.endsWith('.m4a')) return 'audio/mp4';
-  if (lowerName.endsWith('.mp4')) return 'video/mp4';
-  if (lowerName.endsWith('.mov')) return 'video/quicktime';
-  if (lowerName.endsWith('.webm')) return 'video/webm';
-  if (lowerName.endsWith('.png')) return 'image/png';
-  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) return 'image/jpeg';
-  if (assetType === 'audio') return 'audio/mpeg';
-  if (assetType === 'video') return 'video/mp4';
-  if (assetType === 'image') return 'image/jpeg';
-  return 'application/octet-stream';
-};
+# Hashtag Generation Rules
+Generate 4-6 hashtags based on actual content analysis.
 
-const isMediaWithAudio = (mimeType: string): boolean => {
-  return mimeType.startsWith('audio/') || mimeType.startsWith('video/');
-};
+---
 
-const shouldTranscribe = (mimeType: string, size: number): boolean => {
-  return isMediaWithAudio(mimeType) && size > 0 && size <= MAX_TRANSCRIBE_BYTES;
-};
+# Final Reminders
+- Output ONLY the JSON object. No explanation, no markdown fences.
+- IMPORTANT: For the 'captions_srt' and 'metadata' fields, you must properly escape all newlines (\\\\n) and double quotes (\\\\") so the JSON remains valid.
+- Scenes array must contain **multiple scenes** proportional to video length.
+- Be precise with timestamps (use decimals like 3.5, 7.25).
+- For OTIO 'source_range', use a default rate of 30.0 fps unless detected otherwise.
+`;
 
-const buildFallbackTags = (name: string, type: string, mimeType: string): string[] => {
-  const sanitizedName = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2);
-  return Array.from(new Set([type, mimeType.split('/')[0], ...sanitizedName])).slice(0, 4);
-};
-
-const toBase64 = (buffer: ArrayBuffer): string => {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
-};
-
-const transcribeWithReplicate = async (
-  fileBuffer: ArrayBuffer,
-  mimeType: string,
-  token: string
-): Promise<TranscriptionResult | null> => {
-  const audioDataUrl = `data:${mimeType};base64,${toBase64(fileBuffer)}`;
-
-  const createRes = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      version: REPLICATE_WHISPER_VERSION,
-      input: {
-        audio: audioDataUrl,
-        language: 'auto',
-        translate: false,
-        transcription: 'srt',
-      },
-    }),
-  });
-
-  if (!createRes.ok) {
-    throw new Error(`Replicate create failed with status ${createRes.status}`);
-  }
-
-  const prediction = await createRes.json() as { id: string; status: string; output?: any };
-  const output = prediction.id ? await pollReplicatePrediction(prediction.id, token) : prediction.output;
-
-  return parseReplicateOutput(output);
-};
-
-const pollReplicatePrediction = async (id: string, token: string): Promise<any> => {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
-      headers: { 'Authorization': `Bearer ${token}` },
+  try {
+    const config = { thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }, responseMimeType: 'application/json' };
+    const responseStream = await ai.models.generateContentStream({
+      model: 'gemini-3.1-pro-preview',
+      config,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
     });
-
-    if (!res.ok) {
-      throw new Error(`Replicate polling failed with status ${res.status}`);
+    
+    let fullText = '';
+    for await (const chunk of responseStream) {
+      fullText += chunk.text;
     }
-
-    const prediction = await res.json() as { status: string; output?: any; error?: string };
-    if (prediction.status === 'succeeded') return prediction.output;
-    if (prediction.status === 'failed' || prediction.status === 'canceled') {
-      throw new Error(prediction.error || `Replicate prediction ${prediction.status}`);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    
+    return extractFirstJsonObject(fullText);
+  } catch (err) {
+    console.error('Unified Gemini Pro synthesis failed:', err);
+    return null;
   }
-  throw new Error('Replicate prediction timed out');
-};
+}
 
-const parseReplicateOutput = (output: any): TranscriptionResult | null => {
-  if (!output) return null;
-  let parsed = output;
-  if (typeof parsed === 'string') {
-    try { parsed = JSON.parse(parsed); } catch { return { text: parsed, srt: '' }; }
-  }
-  const segments = Array.isArray(parsed?.segments) ? parsed.segments : [];
-  const text = typeof parsed?.transcription === 'string' && !parsed.transcription.includes('-->')
-    ? parsed.transcription
-    : segments.map((s: any) => String(s.text || '').trim()).join(' ');
-  const srt = typeof parsed?.transcription === 'string' && parsed.transcription.includes('-->')
-    ? parsed.transcription
-    : '';
-  return { text, srt };
-};
-
-const analyzeAssetWithGemini = async ({
+async function analyzeAssetWithGemini({
   apiKey, assetName, assetType, mimeType, size, transcript,
 }: {
   apiKey: string; assetName: string; assetType: string; mimeType: string; size: number; transcript: string;
-}): Promise<{ description: string; tags: string[] }> => {
+}): Promise<{ description: string; tags: string[] }> {
+  const ai = new GoogleGenAI({ apiKey });
   const transcriptExcerpt = transcript ? transcript.slice(0, 500) : 'No transcript available.';
-  const prompt = [
-    'You are tagging an uploaded media asset for a creative repository.',
-    'Return strict JSON only: {"description":"...","tags":["..."]}.',
-    `Asset name: ${assetName}`,
-    `Asset type: ${assetType}`,
-    `MIME type: ${mimeType}`,
-    `File size: ${size} bytes`,
-    `Transcript excerpt: ${transcriptExcerpt}`,
-  ].join('\n');
+  
+  const prompt = `
+You are tagging an uploaded media asset for a creative repository.
+Return strict JSON only: {"description":"...","tags":["..."]}.
+Asset name: ${assetName}
+Asset type: ${assetType}
+MIME type: ${mimeType}
+File size: ${size} bytes
+Transcript excerpt: ${transcriptExcerpt}
+`;
 
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
-    );
-
-    if (!res.ok) throw new Error(`Gemini analysis failed with status ${res.status}`);
-
-    const data = await res.json() as any;
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const parsed = extractFirstJsonObject(text);
+    const responseStream = await ai.models.generateContentStream({
+      model: 'gemini-3.1-pro-preview',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+    let fullText = '';
+    for await (const chunk of responseStream) {
+      fullText += chunk.text;
+    }
+    const parsed = extractFirstJsonObject(fullText);
 
     return {
       description: typeof parsed?.description === 'string'
@@ -783,6 +759,63 @@ const analyzeAssetWithGemini = async ({
       tags: buildFallbackTags(assetName, assetType, mimeType),
     };
   }
+}
+
+// ============================================================
+// UTILITIES
+// ============================================================
+
+const shouldTranscribe = (mimeType: string, size: number): boolean => {
+  return (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) && size > 0 && size <= MAX_TRANSCRIBE_BYTES;
+};
+
+const buildFallbackTags = (name: string, type: string, mimeType: string): string[] => {
+  const sanitizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean).slice(0, 2);
+  return Array.from(new Set([type, mimeType.split('/')[0], ...sanitizedName])).slice(0, 4);
+};
+
+const toBase64 = (buffer: ArrayBuffer): string => {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+};
+
+const transcribeWithReplicate = async (fileBuffer: ArrayBuffer, mimeType: string, token: string): Promise<TranscriptionResult | null> => {
+  const audioDataUrl = `data:${mimeType};base64,${toBase64(fileBuffer)}`;
+  const createRes = await fetch('https://api.replicate.com/v1/predictions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version: REPLICATE_WHISPER_VERSION, input: { audio: audioDataUrl, language: 'auto', translate: false, transcription: 'srt' } }),
+  });
+
+  if (!createRes.ok) throw new Error(`Replicate create failed with status ${createRes.status}`);
+  const prediction = await createRes.json() as { id: string; status: string; output?: any };
+  const output = prediction.id ? await pollReplicatePrediction(prediction.id, token) : prediction.output;
+  return parseReplicateOutput(output);
+};
+
+const pollReplicatePrediction = async (id: string, token: string): Promise<any> => {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const res = await fetch(`https://api.replicate.com/v1/predictions/${id}`, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Replicate polling failed with status ${res.status}`);
+    const prediction = await res.json() as { status: string; output?: any; error?: string };
+    if (prediction.status === 'succeeded') return prediction.output;
+    if (prediction.status === 'failed' || prediction.status === 'canceled') throw new Error(prediction.error || `Replicate prediction ${prediction.status}`);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error('Replicate prediction timed out');
+};
+
+const parseReplicateOutput = (output: any): TranscriptionResult | null => {
+  if (!output) return null;
+  let parsed = output;
+  if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed); } catch { return { text: parsed, srt: '' }; } }
+  const segments = Array.isArray(parsed?.segments) ? parsed.segments : [];
+  const text = typeof parsed?.transcription === 'string' && !parsed.transcription.includes('-->')
+    ? parsed.transcription : segments.map((s: any) => String(s.text || '').trim()).join(' ');
+  const srt = typeof parsed?.transcription === 'string' && parsed.transcription.includes('-->') ? parsed.transcription : '';
+  return { text, srt };
 };
 
 const extractFirstJsonObject = (text: string): any => {
