@@ -327,18 +327,18 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                             </div>
 
                             {/* Toolbar / Action Bar */}
-                            <div className="px-6 py-4 bg-slate-50/50 dark:bg-white/[0.02] border-t border-slate-100 dark:border-border-dark flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div className="flex flex-col gap-4 border-t border-slate-100 bg-slate-50/70 px-5 py-4 dark:border-border-dark dark:bg-surface-card/50 md:px-6">
 
                                 {/* Tools */}
-                                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                                <div className="flex flex-wrap items-center gap-2">
 
                                     {/* Repo Dropdown */}
                                     <div className="relative" ref={repoDropdownRef}>
                                         <button
                                             onClick={() => setIsRepoDropdownOpen(!isRepoDropdownOpen)}
-                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all whitespace-nowrap ${isRepoDropdownOpen
-                                                ? 'bg-primary/20 dark:bg-primary/10 border-primary/30 dark:border-primary/20 text-emerald-700 dark:text-primary'
-                                                : 'border-transparent hover:bg-white dark:hover:bg-white/10 hover:border-slate-200 dark:hover:border-white/10 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                            className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-all whitespace-nowrap ${isRepoDropdownOpen
+                                                ? 'border-primary/30 bg-primary/10 text-emerald-700 dark:text-primary'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:border-primary/30 hover:text-slate-900 dark:border-border-dark dark:bg-background-dark dark:text-slate-300 dark:hover:text-white'
                                                 }`}
                                         >
                                             <span className="material-icons-outlined text-lg">folder_open</span>
@@ -372,7 +372,7 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                                                                     if (onSelectRepo) onSelectRepo(repo);
                                                                 }}
                                                                 className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center gap-2 ${selectedRepoId === repo.id
-                                                                    ? 'bg-primary/20 dark:bg-primary/10 text-emerald-700 dark:text-primary'
+                                                                    ? 'bg-primary/10 text-emerald-700 dark:text-primary'
                                                                     : 'hover:bg-slate-50 dark:hover:bg-white/5 text-slate-600 dark:text-slate-300'
                                                                     }`}
                                                             >
@@ -387,15 +387,13 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                                         )}
                                     </div>
 
-                                    <div className="w-px h-4 bg-slate-200 dark:bg-white/10 mx-1"></div>
-
                                     {/* Mode Selector */}
                                     <div className="relative" ref={modeDropdownRef}>
                                         <button
                                             onClick={() => setIsModeDropdownOpen(!isModeDropdownOpen)}
-                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all whitespace-nowrap ${isModeDropdownOpen
-                                                ? 'bg-primary/20 dark:bg-primary/10 border-primary/30 dark:border-primary/20 text-emerald-700 dark:text-primary'
-                                                : 'border-transparent hover:bg-white dark:hover:bg-white/10 hover:border-slate-200 dark:hover:border-white/10 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                            className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-all whitespace-nowrap ${isModeDropdownOpen
+                                                ? 'border-primary/30 bg-primary/10 text-emerald-700 dark:text-primary'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:border-primary/30 hover:text-slate-900 dark:border-border-dark dark:bg-background-dark dark:text-slate-300 dark:hover:text-white'
                                                 }`}
                                         >
                                             <span className="material-icons-outlined text-lg">{activeMode.icon}</span>
@@ -414,7 +412,7 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                                                                 setIsModeDropdownOpen(false);
                                                             }}
                                                             className={`w-full text-left px-3 py-2.5 rounded-lg text-xs transition-colors flex items-start gap-3 ${selectedModeId === mode.id
-                                                                ? 'bg-primary/20 dark:bg-primary/10 text-emerald-700 dark:text-primary'
+                                                                ? 'bg-primary/10 text-emerald-700 dark:text-primary'
                                                                 : 'hover:bg-slate-50 dark:hover:bg-white/5 text-slate-600 dark:text-slate-300'
                                                                 }`}
                                                         >
@@ -430,17 +428,28 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                                             </div>
                                         )}
                                     </div>
+                                    <button
+                                        onClick={() => setShowAssetLibrary(true)}
+                                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-all hover:border-primary/30 hover:text-slate-900 active:scale-95 dark:border-border-dark dark:bg-background-dark dark:text-slate-300 dark:hover:text-white"
+                                    >
+                                        <span className="material-icons-outlined text-lg">video_library</span>
+                                        Assets
+                                        {selectedAssetIds.length > 0 && (
+                                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-mono text-primary">
+                                                {selectedAssetIds.length}
+                                            </span>
+                                        )}
+                                    </button>
                                 </div>
 
                                 {/* Generate Button */}
                                 <button
                                     onClick={handleSubmit}
                                     disabled={isProcessing || !prompt.trim()}
-                                    className={`relative group overflow-hidden bg-slate-900 dark:bg-white text-white dark:text-black px-6 py-2.5 rounded-xl font-medium text-sm transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none w-full sm:w-auto`}
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-display font-bold tracking-wide text-black transition-all duration-200 ease-out hover:bg-primary_hover active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 dark:disabled:bg-border-dark dark:disabled:text-gray-500 sm:w-auto"
                                 >
-                                    <div className="absolute inset-0 bg-primary opacity-0 group-hover:opacity-10 transition-opacity"></div>
                                     <div className="flex items-center gap-2 relative z-10">
-                                        <span className={isProcessing ? "animate-pulse" : ""}>{isProcessing ? 'Processing' : (selectedModeId === 'interactive' ? 'Plan Changes' : 'Execute Edit')}</span>
+                                        <span className={isProcessing ? "animate-pulse" : ""}>{isProcessing ? 'Processing' : primaryActionLabel}</span>
                                         <span className={`material-icons-outlined text-base ${isProcessing ? 'animate-spin' : ''}`}>
                                             {isProcessing ? 'sync' : (selectedModeId === 'interactive' ? 'forum' : 'auto_fix_high')}
                                         </span>
@@ -458,8 +467,8 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
 
                         {/* Feedback / Status Message under the card */}
                         {feedback && (
-                            <div className="mt-4 text-center animate-in fade-in slide-in-from-top-2">
-                                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-white/10 border border-slate-200 dark:border-white/20 text-slate-900 dark:text-white text-xs font-medium">
+                            <div className="mt-4 animate-in fade-in slide-in-from-top-2">
+                                <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-white/10 border border-slate-200 dark:border-border-dark text-slate-900 dark:text-white text-xs font-medium">
                                     <span className="material-icons-outlined text-sm">check_circle</span>
                                     {feedback}
                                 </span>
@@ -468,16 +477,22 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                     </div>
 
                     {/* Quick Suggestions */}
-                    <div className="flex flex-wrap justify-center gap-2 max-w-4xl mx-auto opacity-0 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200 fill-mode-forwards">
+                    <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5 dark:border-border-dark dark:bg-background-dark/45">
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500">Quick Prompts</h3>
+                        <p className="mt-2 text-sm text-slate-500 dark:text-gray-400">
+                            Start with a concrete move, then refine once the plan is on the page.
+                        </p>
+                        <div className="mt-4 flex flex-wrap gap-2">
                         {SUGGESTIONS.slice(0, 3).map((sugg, i) => (
                             <button
                                 key={i}
                                 onClick={() => setPrompt(sugg)}
-                                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-border-dark hover:border-primary/20 dark:hover:border-primary/20 bg-white dark:bg-surface-card hover:bg-primary/5 dark:hover:bg-primary/5 text-xs text-slate-500 dark:text-slate-400 transition-colors"
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-slate-900 dark:border-border-dark dark:bg-surface-card dark:text-slate-400 dark:hover:text-white"
                             >
                                 {sugg}
                             </button>
                         ))}
+                        </div>
                     </div>
 
                 </div>
