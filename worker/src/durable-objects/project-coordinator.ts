@@ -8,6 +8,13 @@ type AgentState = {
   completedCount: number;
 };
 
+type CoordinatorState = {
+  activeJobId: string | null;
+  progress: number;
+  jobStatus: string;
+  agentStates: AgentState[];
+};
+
 const createDefaultAgentStates = (): AgentState[] =>
   Array.from({ length: 4 }, (_, index) => ({
     slot: index + 1,
@@ -18,12 +25,41 @@ const createDefaultAgentStates = (): AgentState[] =>
   }));
 
 export class ProjectCoordinatorDO extends DurableObject {
+  private static readonly STORAGE_KEY = 'coordinator-state';
   private activeJobId: string | null = null;
   private progress: number = 0;
   private jobStatus: string = 'idle';
   private agentStates: AgentState[] = createDefaultAgentStates();
+  private stateHydrated = false;
+
+  private async hydrateState() {
+    if (this.stateHydrated) return;
+
+    const persisted = await this.ctx.storage.get<CoordinatorState>(ProjectCoordinatorDO.STORAGE_KEY);
+    if (persisted) {
+      this.activeJobId = persisted.activeJobId ?? null;
+      this.progress = typeof persisted.progress === 'number' ? persisted.progress : 0;
+      this.jobStatus = persisted.jobStatus ?? 'idle';
+      this.agentStates = Array.isArray(persisted.agentStates) && persisted.agentStates.length > 0
+        ? persisted.agentStates
+        : createDefaultAgentStates();
+    }
+
+    this.stateHydrated = true;
+  }
+
+  private async persistState() {
+    await this.ctx.storage.put(ProjectCoordinatorDO.STORAGE_KEY, {
+      activeJobId: this.activeJobId,
+      progress: this.progress,
+      jobStatus: this.jobStatus,
+      agentStates: this.agentStates,
+    } satisfies CoordinatorState);
+  }
 
   async fetch(request: Request): Promise<Response> {
+    await this.hydrateState();
+
     const url = new URL(request.url);
 
     if (url.pathname === '/lock') {
@@ -35,6 +71,7 @@ export class ProjectCoordinatorDO extends DurableObject {
       this.progress = 0;
       this.jobStatus = 'queued';
       this.agentStates = createDefaultAgentStates();
+      await this.persistState();
       return new Response(JSON.stringify({ success: true }));
     }
 
@@ -48,6 +85,7 @@ export class ProjectCoordinatorDO extends DurableObject {
         assetId: null,
         assetName: null,
       }));
+      await this.persistState();
       this.broadcast({ type: 'job_completed' });
       return new Response(JSON.stringify({ success: true }));
     }
@@ -63,6 +101,7 @@ export class ProjectCoordinatorDO extends DurableObject {
       this.progress = typeof body.progress === 'number' ? body.progress : 0;
       this.jobStatus = body.jobStatus ?? 'idle';
       this.agentStates = createDefaultAgentStates();
+      await this.persistState();
       this.broadcast({
         type: 'job_reset',
         progress: this.progress,
@@ -77,6 +116,7 @@ export class ProjectCoordinatorDO extends DurableObject {
       if (typeof body.progress === 'number') this.progress = body.progress;
       if (body.status || body.jobStatus) this.jobStatus = body.status || body.jobStatus || this.jobStatus;
       if (Array.isArray(body.agents)) this.agentStates = body.agents;
+      await this.persistState();
       
       this.broadcast({ 
         type: 'progress', 

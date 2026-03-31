@@ -242,7 +242,12 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     const persistedVideoCount = projectPayload?.assets?.filter((asset: any) => String(asset.type || '').startsWith('video')).length || 0;
     const activeVideoCount = selectedVideoCount || persistedVideoCount;
     const targetAgentCount = Math.min(4, activeVideoCount || stagedFileCount || 0);
-    const liveAgentPool = Array.from({ length: 4 }, (_, index) => {
+    const workflowStatus = projectPayload?.liveStatus || projectPayload?.activeJob?.status || '';
+    const workflowHasStarted = ['queued', 'running', 'transcribing', 'analyzing', 'generating_artifacts', 'completed'].includes(String(workflowStatus));
+    const inferredActiveAsset = projectPayload?.assets?.find((asset: any) =>
+        ['processing', 'transcribing', 'analyzing'].includes(String(asset.status || ''))
+    );
+    const rawLiveAgentPool = Array.from({ length: 4 }, (_, index) => {
         const liveAgent = projectPayload?.liveAgents?.find((agent: any) => agent.slot === index + 1);
         if (liveAgent) {
             return liveAgent;
@@ -255,6 +260,23 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             completedCount: 0,
         };
     });
+    const allAgentsIdle = rawLiveAgentPool.every((agent: any) => agent.status === 'idle' && !agent.assetName);
+    const liveAgentPool = allAgentsIdle && workflowHasStarted && targetAgentCount > 0
+        ? rawLiveAgentPool.map((agent: any, index: number) => {
+            if (index === 0 && inferredActiveAsset) {
+                return {
+                    ...agent,
+                    status: inferredActiveAsset.status === 'processing' ? 'queued' : inferredActiveAsset.status,
+                    assetName: inferredActiveAsset.name,
+                };
+            }
+
+            return {
+                ...agent,
+                status: index < targetAgentCount ? 'queued' : 'idle',
+            };
+        })
+        : rawLiveAgentPool;
     const currentProgress = step === 'uploading'
         ? uploadProgress
         : (projectPayload?.liveProgress || projectPayload?.activeJob?.progress || 0);
