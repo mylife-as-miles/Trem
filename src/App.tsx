@@ -181,7 +181,13 @@ const App: React.FC = () => {
         }
 
         // Determine the actual view to set
-        if (typeof view === 'string' && view.includes('/logs')) {
+        if (typeof view === 'string' && view.startsWith('create-repo/')) {
+            const projectId = view.split('/')[1];
+            if (projectId) {
+                setActiveProjectId(projectId);
+                setCurrentView('create-repo');
+            }
+        } else if (typeof view === 'string' && view.includes('/logs')) {
             setCurrentView('repo-logs');
         } else if (view !== currentView) {
             setCurrentView(view as ViewType);
