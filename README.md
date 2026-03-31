@@ -101,7 +101,7 @@ npm install
 ### 2. Environment Configuration
 Create `.env.local`:
 ```env
-VITE_API_URL="https://trem-ai-worker.siscomilesinfo.workers.dev"
+VITE_API_URL="https://your-worker.your-subdomain.workers.dev"
 ```
 
 Provider secrets now live in Cloudflare Worker secrets:
