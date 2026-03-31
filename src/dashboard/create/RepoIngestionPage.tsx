@@ -478,65 +478,78 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                         {/* Step 4: Completed */}
                         {step === 'completed' && projectPayload && (
                             <section className="animate-fade-in-up space-y-6">
-                                <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
-                                    <div className="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
-                                        <h3 className="text-lg font-bold font-display text-white">Repository Initialized</h3>
-                                        <div className="flex items-center gap-2">
-                                            <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_10px_rgba(132,204,22,0.5)]"></span>
-                                            <span className="text-xs font-mono uppercase tracking-wider text-primary">Commit Ready</span>
+                                <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/80 dark:border-border-dark dark:bg-background-dark/50">
+                                    <div className="flex flex-col gap-4 border-b border-slate-200/70 bg-white/60 p-5 dark:border-border-dark dark:bg-surface-card/70 md:flex-row md:items-center md:justify-between md:p-6">
+                                        <div>
+                                            <h3 className="text-lg font-display font-bold tracking-tight text-slate-900 dark:text-white">Repository initialized</h3>
+                                            <p className="mt-2 text-sm text-slate-500 dark:text-gray-400">
+                                                Your source set has been staged and the first artifacts are ready for the next workspace step.
+                                            </p>
+                                        </div>
+                                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-primary">
+                                            <span className="h-2 w-2 rounded-full bg-primary animate-pulse"></span>
+                                            Commit Ready
                                         </div>
                                     </div>
-                                    
-                                    <div className="p-6 space-y-6">
-                                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                            <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-800 relative group overflow-hidden">
-                                                <div className="absolute inset-0 bg-primary/5 group-hover:bg-primary/10 transition-colors"></div>
-                                                <div className="text-xs text-zinc-500 font-mono mb-1 relative z-10">Processed Assets</div>
-                                                <div className="text-2xl font-bold text-white relative z-10">{stats.items} <span className="text-sm font-normal text-zinc-500">files</span></div>
+
+                                    <div className="space-y-6 p-5 md:p-6">
+                                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 dark:border-border-dark dark:bg-surface-card">
+                                                <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Processed Assets</div>
+                                                <div className="mt-2 text-2xl font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                    {stats.items} <span className="text-sm font-normal text-slate-400 dark:text-gray-500">files</span>
+                                                </div>
                                             </div>
-                                            <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-800 relative group overflow-hidden">
-                                                <div className="absolute inset-0 bg-primary/5 group-hover:bg-primary/10 transition-colors"></div>
-                                                <div className="text-xs text-zinc-500 font-mono mb-1 relative z-10">Generated Artifacts</div>
-                                                <div className="text-2xl font-bold text-white relative z-10">{stats.artifactsCount} <span className="text-sm font-normal text-zinc-500">files</span></div>
+                                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 dark:border-border-dark dark:bg-surface-card">
+                                                <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Generated Artifacts</div>
+                                                <div className="mt-2 text-2xl font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                    {stats.artifactsCount} <span className="text-sm font-normal text-slate-400 dark:text-gray-500">files</span>
+                                                </div>
                                             </div>
-                                            <div className="p-4 rounded-lg bg-zinc-900 border border-zinc-800 relative group overflow-hidden col-span-2">
-                                                <div className="absolute inset-0 bg-primary/5 group-hover:bg-primary/10 transition-colors"></div>
-                                                <div className="text-xs text-zinc-500 font-mono mb-1 relative z-10">Project Name</div>
-                                                <div className="text-xl font-bold text-primary truncate relative z-10">{projectPayload.project.name}</div>
+                                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 dark:border-border-dark dark:bg-surface-card sm:col-span-2 xl:col-span-1">
+                                                <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Project Name</div>
+                                                <div className="mt-2 truncate text-lg font-display font-bold tracking-tight text-primary">
+                                                    {projectPayload.project.name}
+                                                </div>
                                             </div>
                                         </div>
 
                                         <div className="space-y-4">
-                                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                                                <label className="text-xs font-mono uppercase text-zinc-500 font-bold">Cloudflare R2 Artifacts</label>
-                                                <span className="text-[10px] font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">D1/R2</span>
+                                            <div className="flex items-center justify-between border-b border-slate-200 pb-2 dark:border-border-dark">
+                                                <label className="text-xs font-mono font-bold uppercase text-slate-400 dark:text-gray-500">Cloudflare Artifacts</label>
+                                                <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-mono text-primary">D1 / R2</span>
                                             </div>
-                                            <div className="font-mono text-xs text-zinc-400 space-y-2">
-                                                {projectPayload.artifacts?.map((artifact: any, idx: number) => (
-                                                    <div key={idx} className="flex items-center justify-between p-2 rounded bg-zinc-900/50 border border-zinc-800/50">
-                                                        <div className="flex items-center gap-3">
-                                                            <span className="material-icons-outlined text-sm text-primary">description</span>
-                                                            <span className="text-zinc-200">{artifact.name}</span>
+
+                                            <div className="space-y-2 font-mono text-xs text-slate-500 dark:text-gray-400">
+                                                {(projectPayload.artifacts?.length || 0) > 0 ? (
+                                                    projectPayload.artifacts?.map((artifact: any, idx: number) => (
+                                                        <div key={idx} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-3 py-3 dark:border-border-dark dark:bg-surface-card">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="material-icons-outlined text-sm text-primary">description</span>
+                                                                <span className="text-slate-800 dark:text-slate-200">{artifact.name}</span>
+                                                            </div>
+                                                            <span className="text-slate-400 dark:text-gray-500">
+                                                                {artifact.size ? `${(artifact.size / 1024).toFixed(1)} KB` : 'Ready'}
+                                                            </span>
                                                         </div>
-                                                        <span className="text-zinc-600">
-                                                            {artifact.size ? `${(artifact.size / 1024).toFixed(1)} KB` : 'Ready'}
-                                                        </span>
+                                                    ))
+                                                ) : (
+                                                    <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500 dark:border-border-dark dark:bg-background-dark dark:text-gray-400">
+                                                        Artifacts are still being indexed for display.
                                                     </div>
-                                                ))}
+                                                )}
                                             </div>
                                         </div>
                                     </div>
-                                    
-                                    <div className="p-6 bg-zinc-900/50 border-t border-zinc-800 flex justify-end">
+
+                                    <div className="flex justify-end border-t border-slate-200/70 bg-white/60 p-5 dark:border-border-dark dark:bg-surface-card/70 md:p-6">
                                         <button
                                             onClick={() => {
-                                                // Ideally, we navigate to the new backend-driven specific repo view
-                                                // But since that might not exist yet, we'll navigate back to dashboard
                                                 onNavigate('dashboard');
                                             }}
-                                            className="bg-primary hover:bg-primary_hover text-black px-6 py-3 rounded-lg font-bold transition-all flex items-center gap-2 transform active:scale-95"
+                                            className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-display font-bold tracking-wide text-black transition-all duration-200 ease-out hover:bg-primary_hover active:scale-95"
                                         >
-                                            <span className="material-icons-outlined">folder</span>
+                                            <span className="material-icons-outlined text-base">folder</span>
                                             Go to Workspace
                                         </button>
                                     </div>
@@ -545,18 +558,69 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                         )}
                     </div>
 
-                    {/* Footer Controls */}
-                    <div className="mt-8 pt-6 border-t border-zinc-800 flex justify-between">
-                        <button onClick={() => onNavigate('dashboard')} className="text-zinc-500 hover:text-white transition-colors font-mono text-sm">
-                            Cancel & Discard
-                        </button>
-                        <div className="text-xs text-zinc-600 font-mono">
-                            Trem-AI CF Pipeline v2.0
+                    <aside className="space-y-4">
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5 dark:border-border-dark dark:bg-background-dark/50">
+                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Current Snapshot</div>
+                            <div className="mt-4 space-y-4">
+                                <div>
+                                    <div className="text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                        {repoName || projectPayload?.project?.name || 'Untitled repository'}
+                                    </div>
+                                    <div className="mt-1 text-sm text-slate-500 dark:text-gray-400">
+                                        {repoBrief || 'Add a brief to guide the first semantic pass.'}
+                                    </div>
+                                </div>
+                                <div className="grid gap-3">
+                                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                        <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Files</div>
+                                        <div className="mt-2 text-xl font-display font-bold tracking-tight text-slate-900 dark:text-white">{selectedFiles.length}</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                        <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Volume</div>
+                                        <div className="mt-2 text-xl font-display font-bold tracking-tight text-slate-900 dark:text-white">{formatFileSize(totalSelectedSize)}</div>
+                                    </div>
+                                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                        <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Workflow</div>
+                                        <div className="mt-2 text-sm font-medium capitalize text-slate-900 dark:text-white">{currentWorkflowLabel}</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    </div>
 
+                        <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-5 dark:border-border-dark dark:bg-background-dark/50">
+                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">What Happens Next</div>
+                            <div className="mt-4 space-y-4">
+                                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                    <div className="text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">1. Create project record</div>
+                                    <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-gray-400">Trem opens the repository and assigns the active Cloudflare workflow context.</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                    <div className="text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">2. Stream source media</div>
+                                    <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-gray-400">Each file is uploaded in sequence so the workflow can begin with a complete source set.</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                    <div className="text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">3. Review the first pass</div>
+                                    <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-gray-400">Artifacts land back in the repository so you can continue in the workspace without re-uploading.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </aside>
                 </div>
-            </div>
+
+                <div className="flex flex-col gap-3 border-t border-slate-200/70 bg-slate-50/70 px-5 py-4 dark:border-border-dark dark:bg-background-dark/50 sm:flex-row sm:items-center sm:justify-between md:px-6">
+                    <button
+                        onClick={() => onNavigate('dashboard')}
+                        className="text-left text-sm font-medium text-slate-500 transition-colors hover:text-slate-900 dark:text-gray-400 dark:hover:text-white"
+                    >
+                        Cancel & Discard
+                    </button>
+                    <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
+                        Trem-AI CF Pipeline v2.0
+                    </div>
+                </div>
+            </section>
+                </div>
+            </main>
         </div>
     );
 };
