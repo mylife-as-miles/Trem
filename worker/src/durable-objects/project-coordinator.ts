@@ -52,6 +52,26 @@ export class ProjectCoordinatorDO extends DurableObject {
       return new Response(JSON.stringify({ success: true }));
     }
 
+    if (url.pathname === '/reset') {
+      let body: { jobStatus?: string; progress?: number } = {};
+      try {
+        body = await request.json<{ jobStatus?: string; progress?: number }>();
+      } catch {
+        body = {};
+      }
+      this.activeJobId = null;
+      this.progress = typeof body.progress === 'number' ? body.progress : 0;
+      this.jobStatus = body.jobStatus ?? 'idle';
+      this.agentStates = createDefaultAgentStates();
+      this.broadcast({
+        type: 'job_reset',
+        progress: this.progress,
+        jobStatus: this.jobStatus,
+        agents: this.agentStates,
+      });
+      return new Response(JSON.stringify({ success: true }));
+    }
+
     if (url.pathname === '/progress') {
       const body: { progress: number, message?: string, status?: string, jobStatus?: string, agents?: AgentState[] } = await request.json();
       if (typeof body.progress === 'number') this.progress = body.progress;

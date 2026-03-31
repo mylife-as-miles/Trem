@@ -745,31 +745,38 @@ const analyzeAssetWithGemini = async ({
     `Transcript excerpt: ${transcriptExcerpt}`,
   ].join('\n');
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-      }),
-    }
-  );
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+        }),
+      }
+    );
 
-  if (!res.ok) throw new Error(`Gemini analysis failed with status ${res.status}`);
+    if (!res.ok) throw new Error(`Gemini analysis failed with status ${res.status}`);
 
-  const data = await res.json() as any;
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const parsed = extractFirstJsonObject(text);
+    const data = await res.json() as any;
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parsed = extractFirstJsonObject(text);
 
-  return {
-    description: typeof parsed?.description === 'string'
-      ? parsed.description
-      : `Processed ${assetType} asset ${assetName}`,
-    tags: Array.isArray(parsed?.tags) && parsed.tags.length > 0
-      ? parsed.tags.map((t: unknown) => String(t)).slice(0, 5)
-      : buildFallbackTags(assetName, assetType, mimeType),
-  };
+    return {
+      description: typeof parsed?.description === 'string'
+        ? parsed.description
+        : `Processed ${assetType} asset ${assetName}`,
+      tags: Array.isArray(parsed?.tags) && parsed.tags.length > 0
+        ? parsed.tags.map((t: unknown) => String(t)).slice(0, 5)
+        : buildFallbackTags(assetName, assetType, mimeType),
+    };
+  } catch {
+    return {
+      description: `Processed ${assetType} asset ${assetName}`,
+      tags: buildFallbackTags(assetName, assetType, mimeType),
+    };
+  }
 };
 
 const extractFirstJsonObject = (text: string): any => {

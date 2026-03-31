@@ -11,9 +11,141 @@ type Env = {
   INGESTION_WORKFLOW: any; // Workflow API
 };
 
+type WorkflowInstanceStatus =
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'waiting'
+  | 'errored'
+  | 'terminated'
+  | 'complete';
+
+type WorkflowInstanceLike = {
+  terminate: () => Promise<void>;
+  status: () => Promise<{ status: WorkflowInstanceStatus }>;
+};
+
+type ExistingJob = {
+  id: string;
+  status: string;
+  workflow_id: string | null;
+};
+
 const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', cors());
+
+const ACTIVE_WORKFLOW_STATUSES = new Set<WorkflowInstanceStatus>(['queued', 'running', 'paused', 'waiting']);
+const ACTIVE_COORDINATOR_STATUSES = new Set(['queued', 'running', 'transcribing', 'analyzing']);
+
+const getCoordinatorStub = (env: Env, projectId: string) => {
+  const doId = env.PROJECT_COORDINATOR.idFromName(projectId);
+  return env.PROJECT_COORDINATOR.get(doId);
+};
+
+const resetCoordinator = async (
+  env: Env,
+  projectId: string,
+  jobStatus: string = 'idle',
+  progress: number = 0,
+) => {
+  const stub = getCoordinatorStub(env, projectId);
+  await stub.fetch(
+    new Request('http://do/reset', {
+      method: 'POST',
+      body: JSON.stringify({ jobStatus, progress }),
+    }),
+  );
+};
+
+const getCoordinatorStatus = async (env: Env, projectId: string) => {
+  const stub = getCoordinatorStub(env, projectId);
+  const doStatusRes = await stub.fetch(new Request('http://do/status'));
+  return (await doStatusRes.json()) as {
+    activeJobId: string | null;
+    progress: number;
+    jobStatus: string;
+    agents?: unknown[];
+  };
+};
+
+const recoverStaleJobIfNeeded = async (env: Env, projectId: string, job: ExistingJob) => {
+  const doStatus = await getCoordinatorStatus(env, projectId);
+  const now = Math.floor(Date.now() / 1000);
+
+  let workflowStatus: WorkflowInstanceStatus | 'missing' | null = null;
+  if (job.workflow_id) {
+    try {
+      const instance = (await env.INGESTION_WORKFLOW.get(job.workflow_id)) as WorkflowInstanceLike;
+      const workflow = await instance.status();
+      workflowStatus = workflow.status;
+    } catch (error) {
+      workflowStatus = 'missing';
+    }
+  }
+
+  const workflowIsActive =
+    workflowStatus !== null &&
+    workflowStatus !== 'missing' &&
+    ACTIVE_WORKFLOW_STATUSES.has(workflowStatus);
+  const coordinatorOwnsJob = doStatus.activeJobId === job.id;
+  const coordinatorIsActive =
+    coordinatorOwnsJob &&
+    ACTIVE_COORDINATOR_STATUSES.has(doStatus.jobStatus);
+
+  if (workflowIsActive || coordinatorIsActive) {
+    return {
+      recovered: false,
+      response: {
+        error: 'Job already in progress',
+        jobId: job.id,
+        workflowId: job.workflow_id,
+        status: job.status,
+      },
+      statusCode: 409,
+    };
+  }
+
+  if (workflowStatus === 'complete') {
+    await env.DB.prepare(
+      "UPDATE jobs SET status = 'completed', progress = 100, completed_at = COALESCE(completed_at, ?) WHERE id = ?"
+    ).bind(now, job.id).run();
+    await env.DB.prepare(
+      "UPDATE projects SET status = 'ready', updated_at = ? WHERE id = ?"
+    ).bind(now, projectId).run();
+    await resetCoordinator(env, projectId, 'completed', 100);
+
+    return {
+      recovered: false,
+      response: {
+        error: 'The latest ingestion already completed. Refresh the project before starting another run.',
+        jobId: job.id,
+        workflowId: job.workflow_id,
+        status: 'completed',
+      },
+      statusCode: 409,
+    };
+  }
+
+  const staleReason =
+    workflowStatus === 'missing'
+      ? 'Recovered stale job after the workflow instance could not be found.'
+      : `Recovered stale job after the workflow ended with status "${workflowStatus ?? 'unknown'}".`;
+
+  await env.DB.prepare(
+    "UPDATE jobs SET status = 'failed', error = COALESCE(error, ?), completed_at = COALESCE(completed_at, ?) WHERE id = ?"
+  ).bind(staleReason, now, job.id).run();
+  await env.DB.prepare(
+    "UPDATE projects SET status = 'idle', updated_at = ? WHERE id = ?"
+  ).bind(now, projectId).run();
+  await resetCoordinator(env, projectId, 'idle', 0);
+
+  return {
+    recovered: true,
+    response: null,
+    statusCode: 200,
+  };
+};
 
 // --- Project Routes ---
 
@@ -34,7 +166,7 @@ app.get('/api/projects', async (c) => {
   return c.json(results);
 });
 
-app.delete('/api/projects/:id', async (c) => {
+app.on('DELETE', '/api/projects/:id', async (c) => {
   const id = c.req.param('id');
   
   // 1. Find any active jobs and terminate their workflows
@@ -69,6 +201,8 @@ app.delete('/api/projects/:id', async (c) => {
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
 
+  await resetCoordinator(c.env, id);
+
   return c.json({ success: true });
 });
 
@@ -84,10 +218,7 @@ app.get('/api/projects/:id', async (c) => {
   const logs = await c.env.DB.prepare("SELECT * FROM event_logs WHERE project_id = ? ORDER BY created_at DESC LIMIT 50").bind(id).all();
 
   // Get live status from DO
-  const doId = c.env.PROJECT_COORDINATOR.idFromName(id);
-  const stub = c.env.PROJECT_COORDINATOR.get(doId);
-  const doStatusRes = await stub.fetch(new Request('http://do/status'));
-  const doStatus = await doStatusRes.json() as any;
+  const doStatus = await getCoordinatorStatus(c.env, id);
 
   return c.json({
     project,
@@ -112,10 +243,7 @@ app.get('/api/projects/:id/payload', async (c) => {
   const artifacts = await c.env.DB.prepare("SELECT name, size FROM artifacts WHERE project_id = ?").bind(id).all();
 
   // Get live status from DO
-  const doId = c.env.PROJECT_COORDINATOR.idFromName(id);
-  const stub = c.env.PROJECT_COORDINATOR.get(doId);
-  const doStatusRes = await stub.fetch(new Request('http://do/status'));
-  const doStatus = await doStatusRes.json() as any;
+  const doStatus = await getCoordinatorStatus(c.env, id);
 
   return c.json({
     project,
@@ -210,22 +338,19 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
   // Check D1 for any active or queued jobs for this project
   const existingJob = await c.env.DB.prepare(
     "SELECT id, status, workflow_id FROM jobs WHERE project_id = ? AND status IN ('queued', 'running')"
-  ).bind(projectId).first<{ id: string, status: string, workflow_id: string | null }>();
+  ).bind(projectId).first<ExistingJob>();
 
   if (existingJob) {
-    return c.json({ 
-      error: 'Job already in progress', 
-      jobId: existingJob.id, 
-      workflowId: existingJob.workflow_id,
-      status: existingJob.status 
-    }, 409);
+    const staleJobResolution = await recoverStaleJobIfNeeded(c.env, projectId, existingJob);
+    if (!staleJobResolution.recovered) {
+      return c.json(staleJobResolution.response, staleJobResolution.statusCode as 409);
+    }
   }
 
   const jobId = crypto.randomUUID();
 
   // Try to lock the project via DO
-  const doId = c.env.PROJECT_COORDINATOR.idFromName(projectId);
-  const stub = c.env.PROJECT_COORDINATOR.get(doId);
+  const stub = getCoordinatorStub(c.env, projectId);
   const lockRes = await stub.fetch(new Request('http://do/lock', {
     method: 'POST',
     body: JSON.stringify({ jobId })
