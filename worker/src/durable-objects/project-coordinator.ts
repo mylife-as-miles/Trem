@@ -3,7 +3,7 @@ import { DurableObject } from "cloudflare:workers";
 export class ProjectCoordinatorDO extends DurableObject {
   private activeJobId: string | null = null;
   private progress: number = 0;
-  private viewers: Set<WebSocket> = new Set();
+  private jobStatus: string = 'idle';
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -14,28 +14,42 @@ export class ProjectCoordinatorDO extends DurableObject {
         return new Response(JSON.stringify({ error: "Another job is already running for this project." }), { status: 409 });
       }
       this.activeJobId = body.jobId;
+      this.progress = 0;
+      this.jobStatus = 'queued';
       return new Response(JSON.stringify({ success: true }));
     }
 
     if (url.pathname === '/unlock') {
       this.activeJobId = null;
       this.progress = 100;
+      this.jobStatus = 'completed';
       this.broadcast({ type: 'job_completed' });
       return new Response(JSON.stringify({ success: true }));
     }
 
     if (url.pathname === '/progress') {
-      const body: { progress: number, message?: string } = await request.json();
-      this.progress = body.progress;
-      this.broadcast({ type: 'progress', progress: this.progress, message: body.message });
+      const body: { progress: number, message?: string, status?: string } = await request.json();
+      if (typeof body.progress === 'number') this.progress = body.progress;
+      if (body.status) this.jobStatus = body.status;
+      
+      this.broadcast({ 
+        type: 'progress', 
+        progress: this.progress, 
+        message: body.message,
+        jobStatus: this.jobStatus
+      });
       return new Response(JSON.stringify({ success: true }));
     }
 
     if (url.pathname === '/status') {
-      return new Response(JSON.stringify({ activeJobId: this.activeJobId, progress: this.progress }));
+      return new Response(JSON.stringify({ 
+        activeJobId: this.activeJobId, 
+        progress: this.progress,
+        jobStatus: this.jobStatus
+      }));
     }
 
-    if (url.pathname === '/ws') {
+    if (url.pathname.endsWith('/ws')) {
       const upgradeHeader = request.headers.get('Upgrade');
       if (!upgradeHeader || upgradeHeader !== 'websocket') {
         return new Response('Expected Upgrade: websocket', { status: 426 });
@@ -45,7 +59,14 @@ export class ProjectCoordinatorDO extends DurableObject {
       const [client, server] = Object.values(webSocketPair);
 
       this.ctx.acceptWebSocket(server);
-      this.viewers.add(server);
+
+      // Send initial state upon connection
+      server.send(JSON.stringify({
+        type: 'progress',
+        progress: this.progress,
+        jobStatus: this.jobStatus,
+        message: 'Connected to coordinator'
+      }));
 
       return new Response(null, {
         status: 101,
@@ -61,17 +82,23 @@ export class ProjectCoordinatorDO extends DurableObject {
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
-    this.viewers.delete(ws);
+    // DO handles cleanup internally for ctx.getWebSockets()
+  }
+
+  async webSocketError(ws: WebSocket, error: any) {
+    // DO handles cleanup internally
   }
 
   private broadcast(data: any) {
     const msg = JSON.stringify(data);
-    for (const ws of this.viewers) {
+    const sockets = this.ctx.getWebSockets();
+    for (const ws of sockets) {
       try {
         ws.send(msg);
       } catch (e) {
-        this.viewers.delete(ws);
+        // Log error or let DO clean up disconnected socket
       }
     }
   }
 }
+

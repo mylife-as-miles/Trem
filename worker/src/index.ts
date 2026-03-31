@@ -165,6 +165,20 @@ app.get('/api/projects/:projectId/artifacts/:name', async (c) => {
 app.post('/api/projects/:projectId/ingest', async (c) => {
   const projectId = c.req.param('projectId');
 
+  // Check D1 for any active or queued jobs for this project
+  const existingJob = await c.env.DB.prepare(
+    "SELECT id, status, workflow_id FROM jobs WHERE project_id = ? AND status IN ('queued', 'running')"
+  ).bind(projectId).first<{ id: string, status: string, workflow_id: string | null }>();
+
+  if (existingJob) {
+    return c.json({ 
+      error: 'Job already in progress', 
+      jobId: existingJob.id, 
+      workflowId: existingJob.workflow_id,
+      status: existingJob.status 
+    }, 409);
+  }
+
   const jobId = crypto.randomUUID();
 
   // Try to lock the project via DO
