@@ -9,6 +9,33 @@ interface AssetLibraryProps {
     onNavigate?: (view: 'dashboard' | 'repo' | 'timeline' | 'diff' | 'assets' | 'settings' | 'create-repo' | 'repo-files' | 'trem-create' | 'trem-edit') => void;
 }
 
+const formatFileSize = (bytes?: number) => {
+    if (!bytes) return '0 B';
+
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+    }
+
+    return `${size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
+};
+
+const getAssetTypeLabel = (type?: string) => {
+    if (type === 'video') return 'Video';
+    if (type === 'image') return 'Image';
+    return 'Audio';
+};
+
+const getAssetIcon = (type?: string) => {
+    if (type === 'video') return 'movie';
+    if (type === 'image') return 'image';
+    return 'graphic_eq';
+};
+
 const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect, onNavigate }) => {
     const [selectedAssets, setSelectedAssets] = useState<string[]>([]);
     const [assets, setAssets] = useState<AssetData[]>([]);
@@ -172,10 +199,44 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
         fileInputRef.current?.click();
     };
 
+    const totalAssets = assets.length;
+    const videoCount = assets.filter((asset) => asset.type === 'video').length;
+    const imageCount = assets.filter((asset) => asset.type === 'image').length;
+    const audioCount = assets.filter((asset) => asset.type === 'audio').length;
+
+    const libraryStats = [
+        { label: 'All media', value: totalAssets },
+        { label: 'Video', value: videoCount },
+        { label: 'Images', value: imageCount },
+        { label: 'Audio', value: audioCount },
+    ];
+
+    const latestAssetLabel = totalAssets > 0
+        ? `Last upload ${new Date(assets[0].created).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+        : 'Ready for your first upload';
+
+    const renderUploadCard = () => (
+        <button
+            onClick={triggerFileInput}
+            className="relative group w-full aspect-[16/10] bg-white dark:bg-background-dark rounded-2xl overflow-hidden border border-dashed border-slate-300 dark:border-border-dark hover:border-primary transition-all duration-300 flex flex-col items-center justify-center cursor-pointer mb-5 break-inside-avoid shadow-sm hover:-translate-y-1 hover:shadow-xl"
+        >
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-[radial-gradient(circle_at_top,rgba(217,248,95,0.18),transparent_52%)]" />
+            <div className="relative z-10 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 text-primary mb-4">
+                <span className="material-icons-outlined text-3xl">add_circle_outline</span>
+            </div>
+            <div className="relative z-10 text-sm font-display font-bold text-slate-900 dark:text-white tracking-tight">
+                Upload New Media
+            </div>
+            <div className="relative z-10 text-[11px] font-mono uppercase tracking-[0.22em] text-slate-400 dark:text-gray-500 mt-2">
+                Video, image, and audio
+            </div>
+        </button>
+    );
+
 
     return (
         <div
-            className={`flex flex-col bg-slate-50 dark:bg-background-dark text-slate-900 dark:text-white font-sans overflow-hidden selection:bg-primary selection:text-white ${isModal ? 'h-[80vh] w-full rounded-xl border border-slate-200 dark:border-white/10 shadow-2xl' : 'h-screen'}`}
+            className={`flex flex-col bg-slate-50 dark:bg-background-dark text-slate-900 dark:text-white font-sans overflow-hidden selection:bg-primary selection:text-black ${isModal ? 'h-[80vh] w-full rounded-xl border border-slate-200 dark:border-border-dark shadow-2xl' : 'h-screen'}`}
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
@@ -191,10 +252,13 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
 
             {/* Drag Overlay */}
             {isDragging && (
-                <div className="absolute inset-0 z-50 bg-primary/20 backdrop-blur-sm border-4 border-primary border-dashed m-4 rounded-xl flex items-center justify-center pointer-events-none">
-                    <div className="text-center animate-bounce">
-                        <span className="material-icons-outlined text-6xl text-white drop-shadow-lg">cloud_upload</span>
-                        <h2 className="text-2xl font-bold text-white mt-4 drop-shadow-md">Drop Files to Upload</h2>
+                <div className="absolute inset-0 z-50 m-4 rounded-[28px] border-2 border-dashed border-primary bg-background-dark/72 backdrop-blur-md flex items-center justify-center pointer-events-none">
+                    <div className="text-center px-6">
+                        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-black shadow-[0_0_24px_rgba(217,248,95,0.32)]">
+                            <span className="material-icons-outlined text-4xl">cloud_upload</span>
+                        </div>
+                        <h2 className="text-2xl font-display font-bold text-white mt-5 tracking-tight">Drop Files to Upload</h2>
+                        <p className="mt-2 text-sm text-gray-300">We will stage them directly into your Trem asset library.</p>
                     </div>
                 </div>
             )}
@@ -203,18 +267,26 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
 
             {/* Top Navigation (only when not in modal mode) */}
             {!isModal && onNavigate && (
-                <TopNavigation onNavigate={onNavigate} />
+                <TopNavigation onNavigate={onNavigate} activeTab="assets" />
             )}
 
             {/* Main Content */}
             <main className="flex-1 flex flex-col relative bg-slate-50 dark:bg-background-dark overflow-hidden">
                 {isModal && (
-                    <header className="h-20 flex-shrink-0 flex items-center justify-between px-8 border-b border-slate-200 dark:border-white/10 bg-white/80 dark:bg-black/80 backdrop-blur-md sticky top-0 z-30 bg-white dark:bg-black">
+                    <header className="h-20 flex-shrink-0 flex items-center justify-between px-5 md:px-8 border-b border-slate-200 dark:border-border-dark bg-white/80 dark:bg-surface-card/90 backdrop-blur-md sticky top-0 z-30">
                         <div className="flex flex-col justify-center">
                             <h1 className="text-2xl font-display font-bold text-slate-900 dark:text-white tracking-tight">Select Assets</h1>
+                            <p className="text-xs text-slate-500 dark:text-gray-400 mt-1">Choose media from your library and add it to the current flow.</p>
                         </div>
-                        <div className="flex items-center gap-6 flex-1 justify-end">
+                        <div className="flex items-center gap-3 md:gap-4 flex-1 justify-end">
                             <div className="flex items-center gap-3">
+                                <button
+                                    onClick={triggerFileInput}
+                                    className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 dark:border-border-dark text-sm font-medium text-slate-600 dark:text-gray-300 hover:border-primary/40 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5 transition-all active:scale-95"
+                                >
+                                    <span className="material-icons-outlined text-base">upload</span>
+                                    Upload
+                                </button>
                                 <div className="text-sm font-mono text-slate-500 dark:text-gray-400">
                                     {selectedAssets.length} selected
                                 </div>
@@ -226,7 +298,7 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                                 </button>
                                 <button
                                     onClick={handleConfirmSelection}
-                                    className="bg-primary hover:bg-primary_hover text-white px-5 py-2 rounded-lg text-sm font-medium font-display tracking-wide transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="bg-primary hover:bg-primary_hover text-black px-5 py-2 rounded-lg text-sm font-medium font-display tracking-wide transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                                     disabled={selectedAssets.length === 0}
                                 >
                                     Add Selected
@@ -236,30 +308,100 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                     </header>
                 )}
 
-                <div className="flex-1 overflow-y-auto p-8 scroll-smooth">
-                    {/* Masonry Layout Container */}
-                    <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 pb-20 space-y-6">
+                <div className={`flex-1 overflow-y-auto scroll-smooth ${isModal ? 'p-4 md:p-6 bg-slate-50/70 dark:bg-background-dark/70' : 'p-6 md:p-10 fade-in bg-slate-50/50 dark:bg-background-dark'}`}>
+                    {!isModal && (
+                        <div className="max-w-6xl mx-auto space-y-16">
+                            <div className="text-center space-y-6 py-8 md:py-12">
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-emerald-600 dark:text-primary text-xs font-medium tracking-wide">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                                    AI-READY MEDIA LIBRARY
+                                </div>
+
+                                <h1 className="text-5xl md:text-7xl font-display font-bold text-slate-900 dark:text-white tracking-tight leading-tight">
+                                    Assets for <span className="text-primary">Trem AI</span>
+                                </h1>
+
+                                <p className="text-xl text-slate-500 dark:text-gray-400 max-w-2xl mx-auto font-light leading-relaxed">
+                                    Upload, organize, and stage footage, stills, and audio in one library before you send them into Create or Edit.
+                                </p>
+
+                                <div className="flex flex-wrap justify-center gap-2 pt-2">
+                                    {libraryStats.map((stat) => (
+                                        <div
+                                            key={stat.label}
+                                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-surface-card border border-slate-200 dark:border-border-dark text-xs font-medium text-slate-600 dark:text-gray-300"
+                                        >
+                                            <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                                            {stat.value} {stat.label}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className={isModal ? '' : 'max-w-6xl mx-auto'}>
+                        {!isModal && (
+                            <div className="space-y-6">
+                                <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 px-2">
+                                    <div className="max-w-xl">
+                                        <h2 className="text-sm font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">Media Library</h2>
+                                        <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">
+                                            Keep your working set ready. Upload once, then reuse across every Trem workflow with the same source-of-truth library.
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+                                        <div className="rounded-full border border-slate-200 dark:border-border-dark bg-white dark:bg-surface-card px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:text-gray-400">
+                                            {latestAssetLabel}
+                                        </div>
+                                        <button
+                                            onClick={triggerFileInput}
+                                            className="bg-primary hover:bg-primary_hover text-black px-5 py-3 rounded-xl text-sm font-medium font-display tracking-wide transition-all shadow-lg active:scale-95 inline-flex items-center justify-center gap-2"
+                                        >
+                                            <span className="material-icons-outlined text-base">upload</span>
+                                            Upload Assets
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className={isModal ? '' : 'rounded-[28px] border border-slate-200 dark:border-border-dark bg-white/70 dark:bg-surface-card/80 shadow-xl overflow-hidden'}>
+                            {!isModal && (
+                                <div className="px-5 md:px-6 py-4 border-b border-slate-200/70 dark:border-border-dark bg-slate-50/70 dark:bg-background-dark/50 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                                    <div className="flex flex-wrap gap-2">
+                                        {libraryStats.map((stat) => (
+                                            <div
+                                                key={stat.label}
+                                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-surface-card border border-slate-200 dark:border-border-dark text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:text-gray-400"
+                                            >
+                                                <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                                                {stat.label}: {stat.value}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="text-xs font-mono text-slate-400 dark:text-gray-500">
+                                        {totalAssets === 0 ? 'No media uploaded yet' : `${totalAssets} assets available`}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className={isModal ? '' : 'p-5 md:p-6'}>
+
+                    <div className="columns-1 sm:columns-2 xl:columns-3 gap-5 pb-10 space-y-5">
 
                         {/* Upload Placeholder - First Item */}
-                        <div
-                            onClick={triggerFileInput}
-                            className="relative group w-full aspect-[16/9] bg-white dark:bg-black rounded-xl overflow-hidden border border-dashed border-slate-300 dark:border-white/10 hover:border-primary dark:hover:border-primary transition-all duration-300 flex flex-col items-center justify-center cursor-pointer mb-6 break-inside-avoid shadow-sm hover:shadow-md"
-                        >
-                            <div className="text-slate-400 dark:text-gray-600 mb-2 group-hover:text-blue-500 transition-colors">
-                                <span className="material-icons-outlined text-4xl">add_circle_outline</span>
-                            </div>
-                            <div className="text-xs font-mono text-slate-500 dark:text-gray-500 uppercase tracking-widest group-hover:text-blue-500 transition-colors">Upload New</div>
-                        </div>
+                        {renderUploadCard()}
 
                         {assets.map((asset) => (
                             <div
                                 key={asset.id}
                                 onClick={() => isModal && toggleAssetSelection(asset.id)}
                                 className={`
-                                    relative group w-full bg-white dark:bg-black rounded-xl overflow-hidden border transition-all duration-300 mb-6 break-inside-avoid shadow-sm
+                                    relative group w-full bg-white dark:bg-surface-card rounded-2xl overflow-hidden border transition-all duration-300 mb-5 break-inside-avoid shadow-sm
                                     ${isModal && selectedAssets.includes(asset.id)
                                         ? 'border-primary ring-2 ring-primary/50 shadow-lg scale-[1.02]'
-                                        : 'border-slate-200 dark:border-white/10 hover:border-primary dark:hover:border-primary'
+                                        : 'border-slate-200 dark:border-border-dark hover:border-primary dark:hover:border-primary'
                                     }
                                     ${!isModal && 'hover:shadow-xl hover:translate-y-[-2px]'}
                                     ${isModal ? 'cursor-pointer' : ''}
@@ -275,9 +417,9 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                                             loading="lazy"
                                         />
                                     ) : (
-                                        <div className="w-full aspect-video bg-slate-200 dark:bg-gray-900 flex items-center justify-center">
+                                        <div className="w-full aspect-video bg-slate-100 dark:bg-background-dark flex items-center justify-center">
                                             <span className="material-icons-outlined text-4xl text-slate-400 dark:text-gray-600">
-                                                {asset.type === 'image' ? 'image' : 'movie'}
+                                                {getAssetIcon(asset.type)}
                                             </span>
                                         </div>
                                     )}
@@ -289,8 +431,12 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                                 {/* Selection Checkbox Overlay for Modal */}
                                 {isModal && (
                                     <div className="absolute top-2 left-2 z-20">
-                                        <div className={`w-6 h-6 rounded-full border border-white/30 flex items-center justify-center transition-colors ${selectedAssets.includes(asset.id) ? 'bg-primary border-primary' : 'bg-black/50'}`}>
-                                            {selectedAssets.includes(asset.id) && <span className="material-icons-outlined text-sm text-white">check</span>}
+                                        <div className={`w-6 h-6 rounded-full border border-white/30 flex items-center justify-center transition-colors ${selectedAssets.includes(asset.id) ? 'bg-primary border-primary text-black' : 'bg-black/50 text-white'}`}>
+                                            {selectedAssets.includes(asset.id) ? (
+                                                <span className="material-icons-outlined text-sm">check</span>
+                                            ) : (
+                                                <span className="material-icons-outlined text-sm">{getAssetIcon(asset.type)}</span>
+                                            )}
                                         </div>
                                     </div>
                                 )}
@@ -315,27 +461,36 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                                     </div>
                                 )}
 
-                                <div className="absolute bottom-3 left-3 z-10 transition-opacity duration-300 group-hover:opacity-0 w-full pr-6">
-                                    <div className="text-xs font-mono text-white font-bold bg-black/50 px-2 py-1 rounded backdrop-blur-sm border border-white/10 truncate">{asset.name}</div>
+                                <div className="absolute top-3 left-3 z-10 transition-opacity duration-300 group-hover:opacity-0 w-full pr-24">
+                                    <div className="text-[10px] font-mono text-white bg-black/60 px-2 py-1 rounded-full backdrop-blur-sm border border-white/10 inline-flex items-center gap-1 uppercase tracking-[0.18em]">
+                                        {getAssetTypeLabel(asset.type)}
+                                    </div>
                                 </div>
                                 <div className="absolute top-3 right-3 z-10 transition-opacity duration-300 group-hover:opacity-0">
-                                    <div className="text-[10px] font-mono text-gray-300 bg-black/60 px-1.5 py-0.5 rounded backdrop-blur-sm">{asset.duration || asset.type}</div>
+                                    <div className="text-[10px] font-mono text-gray-300 bg-black/60 px-1.5 py-0.5 rounded backdrop-blur-sm">{asset.duration || getAssetTypeLabel(asset.type)}</div>
                                 </div>
 
                                 {/* Detail Overlay - Only show in non-modal or if not interfering with selection */}
                                 {!isModal && (
-                                    <div className="absolute inset-0 bg-black/60 backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col justify-between p-5 border border-primary/30">
+                                    <div className="absolute inset-0 bg-black/60 backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col justify-between p-5 border border-primary/20">
                                         <div className="flex flex-wrap gap-2 transform -translate-y-2 group-hover:translate-y-0 transition-transform duration-300 delay-75">
                                             {asset.tags?.map(tag => (
-                                                <span key={tag} className="px-2.5 py-1 rounded-full bg-primary/20 border border-primary/50 text-emerald-200 text-[10px] font-mono tracking-wide">{tag}</span>
+                                                <span key={tag} className="px-2.5 py-1 rounded-full bg-primary/15 border border-primary/30 text-primary text-[10px] font-mono tracking-wide">{tag}</span>
                                             ))}
                                         </div>
-                                        {asset.meta && (
-                                            <div className="font-mono text-xs text-blue-300 bg-black/80 p-3 rounded border border-blue-500/20 transform scale-95 group-hover:scale-100 transition-transform duration-300 delay-100 relative overflow-hidden">
+                                        {(asset.meta || asset.size) && (
+                                            <div className="font-mono text-xs text-slate-200 bg-black/80 p-3 rounded border border-white/10 transform scale-95 group-hover:scale-100 transition-transform duration-300 delay-100 relative overflow-hidden">
                                                 <div className="absolute top-0 right-0 w-2 h-2 bg-primary rounded-full animate-ping"></div>
                                                 <span className="text-gray-500">{`{`}</span><br />
-                                                &nbsp;&nbsp;<span className="text-emerald-300">"object"</span>: <span className="text-green-400">"{asset.meta.object}"</span>,<br />
-                                                &nbsp;&nbsp;<span className="text-emerald-300">"motion"</span>: <span className="text-green-400">"{asset.meta.motion}"</span><br />
+                                                &nbsp;&nbsp;<span className="text-primary">"type"</span>: <span className="text-white/90">"{getAssetTypeLabel(asset.type)}"</span>,<br />
+                                                &nbsp;&nbsp;<span className="text-primary">"size"</span>: <span className="text-white/90">"{formatFileSize(asset.size)}"</span>
+                                                {asset.meta?.original_width && asset.meta?.original_height ? (
+                                                    <>
+                                                        ,<br />
+                                                        &nbsp;&nbsp;<span className="text-primary">"frame"</span>: <span className="text-white/90">"{asset.meta.original_width}x{asset.meta.original_height}"</span>
+                                                    </>
+                                                ) : null}
+                                                <br />
                                                 <span className="text-gray-500">{`}`}</span>
                                             </div>
                                         )}
@@ -344,8 +499,37 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ isModal, onClose, onSelect,
                                         </div>
                                     </div>
                                 )}
+
+                                <div className="border-t border-slate-100 dark:border-border-dark px-4 py-4 bg-white dark:bg-surface-card/90">
+                                    <div className="min-w-0">
+                                        <h3 className="font-bold text-slate-900 dark:text-white tracking-tight truncate">{asset.name}</h3>
+                                        <p className="mt-1 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
+                                            {formatFileSize(asset.size)} / {new Date(asset.created).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                        </p>
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {asset.meta?.original_width && asset.meta?.original_height && (
+                                            <span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-background-dark border border-slate-200 dark:border-border-dark text-[10px] font-mono text-slate-500 dark:text-gray-400">
+                                                {asset.meta.original_width}x{asset.meta.original_height}
+                                            </span>
+                                        )}
+                                        {(asset.tags || []).slice(0, 2).map((tag) => (
+                                            <span
+                                                key={`${asset.id}-${tag}`}
+                                                className="px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-[10px] font-mono text-emerald-700 dark:text-primary"
+                                            >
+                                                {tag}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
                         ))}
+                    </div>
+
+                            </div>
+                        </div>
                     </div>
                 </div>
             </main>
