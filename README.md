@@ -38,17 +38,16 @@ Built on top of **Remotion**, allowing you to edit VIDEO as CODE.
 
 ## 🛠️ Technical Architecture
 
-### **The Service Worker "Backend"**
-Trem-AI runs entirely in the browser (Local-First), but acts like a full-stack app.
-- **`sw.ts`**: The "Backend" that orchestrates ingestion. It handles API calls to Gemini and Replicate to avoid CORS and thread-blocking issues.
-- **Robustness**: Implements "Cron-job" style resilience. If you close the tab, the Service Worker pauses and resumes instantly when you return.
-- **Atomic Updates**: Uses transactional logic in IndexedDB to ensure data integrity during parallel processing.
+### **The Cloudflare Worker Backend**
+Trem-AI now uses a real backend for ingestion and storage orchestration.
+- **`worker/src/index.ts`**: The API layer for projects, assets, uploads, and workflow kickoff.
+- **`worker/src/workflows/ingestion-workflow.ts`**: The ingestion workflow that reads from R2 and uses server-side provider secrets.
+- **Robustness**: Durable Objects, D1, R2, and Workflows coordinate state outside the browser.
 
 ### **The AI Stack**
-We use a "Mixture of Experts" approach:
-1.  **Gemini 3.0 Flash Preview**: Used for individual asset analysis. Fast, multimodal, and efficient.
-2.  **Gemini 3.0 Pro (Thinking Mode)**: Used for high-level repository synthesis. We enable "High Thinking" configuration to allow the model to reason through complex narratives.
-3.  **Whisper (via Replicate)**: Industry-leading speech-to-text.
+We use a server-side "Mixture of Experts" approach:
+1.  **Gemini**: Used for asset analysis and project-level synthesis inside the Cloudflare Worker workflow.
+2.  **Whisper (via Replicate)**: Used for transcription inside the Cloudflare Worker workflow.
 
 ---
 
@@ -78,10 +77,10 @@ The command center.
 | **Language** | TypeScript |
 | **Styling** | TailwindCSS, CSS Variables |
 | **State Management** | Zustand |
-| **Database** | IndexedDB (Custom wrapper) |
-| **AI Models** | Google Gemini 3.0, OpenAI Whisper |
+| **Database** | Cloudflare D1, IndexedDB (legacy/local compatibility) |
+| **AI Models** | Google Gemini, Replicate Whisper |
 | **Video Engine** | Remotion |
-| **Background** | Service Workers (Workbox) |
+| **Background** | Cloudflare Workers, Workflows, Durable Objects, Service Workers (legacy compatibility) |
 
 ---
 
@@ -89,8 +88,8 @@ The command center.
 
 ### Prerequisites
 - Node.js (v18+)
-- Google AI Studio Key
-- Replicate API Token
+- Cloudflare account
+- Vercel project (for the frontend)
 
 ### 1. Clone & Install
 ```bash
@@ -102,8 +101,15 @@ npm install
 ### 2. Environment Configuration
 Create `.env.local`:
 ```env
-VITE_GEMINI_API_KEY="AIzaSy..."
-VITE_REPLICATE_API_TOKEN="r8_..."
+VITE_API_URL="https://trem-ai-worker.siscomilesinfo.workers.dev"
+```
+
+Provider secrets now live in Cloudflare Worker secrets:
+
+```bash
+cd worker
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put REPLICATE_API_TOKEN
 ```
 
 ### 3. Start Development

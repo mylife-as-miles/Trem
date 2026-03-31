@@ -46,6 +46,8 @@ export const transcribeAudio = async (
         onProgress?: (logs: string) => void;
     } = {},
 ): Promise<WhisperTranscription> => {
+    console.warn('Browser-side transcription is deprecated. Using mock transcription; real transcription now runs in the Cloudflare Worker.');
+
     if (audioBlob.size > MAX_SIZE_MB * 1024 * 1024) {
         console.warn(
             `Audio file too large (${(audioBlob.size / 1024 / 1024).toFixed(1)}MB > ${MAX_SIZE_MB}MB). Using mock transcription.`,
@@ -54,46 +56,7 @@ export const transcribeAudio = async (
     }
 
     try {
-        options.onProgress?.('Uploading audio to transcription service...');
-        const response = await fetch('/api/predictions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${import.meta.env.VITE_REPLICATE_API_TOKEN || ''}`,
-            },
-            body: JSON.stringify({
-                version: '8099696689d249cf8b122d833c36ac3f75505c666a395ca40ef26f68e7d3d16e',
-                input: {
-                    audio: await blobToDataURL(audioBlob),
-                    language: options.language || 'auto',
-                    translate: options.translate || false,
-                },
-            }),
-        });
-
-        if (!response.ok) {
-            throw new Error(`Replicate API error: ${response.status}`);
-        }
-
-        const prediction = await response.json();
-        const output = prediction?.output || prediction;
-
-        if (typeof output === 'object' && output?.segments) {
-            const segments = (output.segments as any[]).map((segment, index) => ({
-                id: segment.id ?? index + 1,
-                start: segment.start ?? 0,
-                end: segment.end ?? 0,
-                text: (segment.text || '').trim(),
-            }));
-
-            return {
-                text: output.transcription || segments.map((segment) => segment.text).join(' '),
-                segments,
-                srt: output.transcription?.includes('-->') ? output.transcription : generateSRT(segments),
-                language: output.detected_language,
-            };
-        }
-
+        options.onProgress?.('Browser transcription is disabled; using mock transcript.');
         return mockTranscription();
     } catch (error) {
         console.error('Whisper transcription error:', error);
@@ -134,15 +97,6 @@ export const transcribeAudioWithWhisperX = async (
         console.error('WhisperX transcription error:', error);
         return null;
     }
-};
-
-const blobToDataURL = (blob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
 };
 
 const formatTime = (seconds: number): string => {

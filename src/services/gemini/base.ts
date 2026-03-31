@@ -1,8 +1,7 @@
-import { GoogleGenAI } from '@google/genai';
-
-const apiKey = process.env.API_KEY || '';
-
-export const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+// Provider secrets now live in the Cloudflare Worker.
+// Keep browser-side Gemini integrations in mock/degraded mode so the
+// frontend no longer depends on a client-exposed API key.
+export const ai = null;
 
 export const retryWithBackoff = async <T>(
     fn: () => Promise<T>,
