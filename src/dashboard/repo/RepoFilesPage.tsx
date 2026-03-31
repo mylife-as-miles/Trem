@@ -3,10 +3,9 @@ import TopNavigation from '../../components/layout/TopNavigation';
 import { RepoData, db } from '../../utils/db'; // Added db import
 import { useUpdateRepo } from '../../hooks/useQueries';
 import AlertDialog from '../../components/ui/AlertDialog';
-import { analyzeAsset, generateRepoStructure } from '../../services/gemini/repo/index';
-import { transcribeAudio } from '../../services/whisperService';
-import { extractFramesFromVideo } from '../../utils/frameExtractor';
-import { extractAudioFromVideo } from '../../utils/audioExtractor';
+// import { analyzeAsset, generateRepoStructure } from '../../services/gemini/repo/index';
+// import { transcribeAudio } from '../../services/whisperService';
+import { apiClient } from '../../api-client';
 
 interface RepoFilesViewProps {
     onNavigate: (view: 'dashboard' | 'repo' | 'timeline' | 'diff' | 'assets' | 'settings' | 'create-repo' | 'repo-files') => void;
@@ -230,176 +229,10 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files?.length) return;
 
-        setIsProcessing(true);
-        setShowTerminal(true);
-        setTerminalLogs([]);
-        addLog("Starting Ingestion Pipeline...");
-
-        const newFiles = Array.from(e.target.files);
-        // We'll process sequentially to avoid overwhelming the client
-        let currentFS = [...files];
-
-        for (const file of newFiles) {
-            addLog(`Processing: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
-
-            // 1. Determine Type
-            const isVideo = file.type.startsWith('video');
-            const isAudio = file.type.startsWith('audio');
-            const isImage = file.type.startsWith('image');
-
-            // 2. Add to assets DB (store Blob)
-            const assetId = `asset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            await db.addAsset({
-                id: assetId,
-                name: file.name,
-                type: isVideo ? 'video' : isAudio ? 'audio' : 'image',
-                blob: file,
-                created: Date.now(),
-                status: 'pending'
-            });
-
-            // 3. Add to FileSystem (media/raw)
-            const mediaFolder = findNode('raw', currentFS) || findNode('media', currentFS); // try raw, fallback media
-
-            const newFileNode: FileNode = {
-                id: assetId, // Match asset ID for preview linkage
-                name: file.name,
-                type: 'file',
-                icon: isVideo ? 'movie' : isAudio ? 'music_note' : isImage ? 'image' : 'description',
-                iconColor: 'text-emerald-400',
-                locked: false
-            };
-
-            // Update FS immutably
-            const addToFolder = (nodes: FileNode[], targetId: string, item: FileNode): FileNode[] => {
-                return nodes.map(n => {
-                    if (n.id === targetId && n.children) return { ...n, children: [...n.children, item] };
-                    if (n.children) return { ...n, children: addToFolder(n.children, targetId, item) };
-                    return n;
-                });
-            };
-
-            if (mediaFolder) {
-                currentFS = addToFolder(currentFS, mediaFolder.id, newFileNode);
-                setFiles(currentFS); // Update UI immediately
-            }
-
-            // 4. Run Analysis Pipeline
-            let analysisResult: any = null;
-            let transcriptText = "";
-
-            if (isVideo) {
-                addLog("Target: VIDEO. Pipeline: Frames -> Whisper -> Gemini");
-
-                // Frames
-                addLog("Extracting Keyframes...");
-                const frames = await extractFramesFromVideo(file);
-                addLog(`Extracted ${frames.length} keyframes.`);
-
-                // Audio
-                addLog("Extracting Audio Track...");
-                const audioBlob = await extractAudioFromVideo(file);
-
-                if (audioBlob) {
-                    addLog("Transcribing Audio (Whisper)...");
-                    const transcript = await transcribeAudio(audioBlob);
-                    transcriptText = transcript.text;
-                    addLog("Transcription Complete via Whisper.");
-                }
-
-                // Gemini
-                addLog("Generating Semantic Index (Gemini Vision)...");
-                analysisResult = await analyzeAsset({
-                    id: assetId,
-                    name: file.name,
-                    blob: file, // Gemini can handle blob if no frames, but we have frames
-                    images: frames.slice(0, 5) // Use first 5 for speed
-                });
-
-            } else if (isAudio) {
-                addLog("Target: AUDIO. Pipeline: Whisper -> Gemini");
-
-                addLog("Transcribing Audio...");
-                const transcript = await transcribeAudio(file);
-                transcriptText = transcript.text;
-
-                addLog("Analyzing Text Context...");
-                // Mock analysis for audio text for now or send text to gemini
-                analysisResult = { description: "Audio file processed", tags: ["audio", "transcript"] };
-            } else {
-                addLog("Target: IMAGE/OTHER. Pipeline: Gemini");
-                analysisResult = await analyzeAsset({
-                    id: assetId,
-                    name: file.name,
-                    blob: file
-                });
-            }
-
-            addLog(`Analysis Complete: ${analysisResult?.tags?.join(', ')}`);
-
-            // 5. Create Metadata File
-            const metaNodeName = `${assetId}.json`;
-            const metaNode: FileNode = {
-                id: `meta_${assetId}`,
-                name: metaNodeName,
-                type: 'file',
-                content: JSON.stringify({
-                    asset_id: assetId,
-                    original_name: file.name,
-                    analysis: analysisResult,
-                    transcript: transcriptText,
-                    processed_at: Date.now(),
-                    history: [{ timestamp: Date.now(), action: 'ingested' }]
-                }, null, 2)
-            };
-
-            // Add meta to 'meta' folder
-            const metaFolder = findNode('meta', currentFS);
-            if (metaFolder) {
-                currentFS = addToFolder(currentFS, metaFolder.id, metaNode);
-            }
-
-            // 6. AGGREGATE UPDATE: scenes.json
-            // We want to ADD this asset's analysis to the global scenes.json
-            const scenesNode = findNode('scenes_json', currentFS) || findNode('scenes.json', currentFS);
-
-            if (scenesNode && scenesNode.content) {
-                try {
-                    const scenesData = JSON.parse(scenesNode.content);
-                    // Check if 'assets' array exists, if not create
-                    if (!scenesData.assets) scenesData.assets = [];
-
-                    // Add new asset data
-                    scenesData.assets.push({
-                        id: assetId,
-                        name: file.name,
-                        description: analysisResult?.description || "Inferred context",
-                        tags: analysisResult?.tags || []
-                    });
-
-                    // Update the node content in FS
-                    // Helper to update specific node content
-                    const updateNodeContent = (nodes: FileNode[], id: string, content: string): FileNode[] => {
-                        return nodes.map(n => {
-                            if (n.id === id) return { ...n, content };
-                            if (n.children) return { ...n, children: updateNodeContent(n.children, id, content) };
-                            return n;
-                        });
-                    };
-                    currentFS = updateNodeContent(currentFS, scenesNode.id, JSON.stringify(scenesData, null, 2));
-                    addLog("Updated Global Context (scenes.json)");
-
-                } catch (e) {
-                    console.warn("Failed to update scenes.json", e);
-                }
-            }
-
-            // 7. Commit
-            await createCommit(`feat: ingested ${file.name} (AI Index v2)`, currentFS);
-        }
-
-        setIsProcessing(false);
-        addLog("All Files Processed.");
+        alert("Direct file processing via the client-side UI is deprecated. This UI will be updated to use the Cloudflare Worker Ingestion Pipeline in v2.");
+        // FUTURE:
+        // 1. Array.from(e.target.files).forEach(f => apiClient.createAsset(projectId, ...))
+        // 2. apiClient.startIngestion(projectId)
     };
 
     // --- Media Preview (Existing Logic + Updates) ---

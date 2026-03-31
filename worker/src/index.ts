@@ -59,6 +59,34 @@ app.get('/api/projects/:id', async (c) => {
   });
 });
 
+app.get('/api/projects/:id/payload', async (c) => {
+  const id = c.req.param('id');
+  const project = await c.env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first();
+
+  if (!project) return c.json({ error: 'Not found' }, 404);
+
+  const assets = await c.env.DB.prepare("SELECT * FROM assets WHERE project_id = ?").bind(id).all();
+  const jobs = await c.env.DB.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").bind(id).all();
+  const logs = await c.env.DB.prepare("SELECT * FROM event_logs WHERE project_id = ? ORDER BY created_at ASC").bind(id).all();
+  const artifacts = await c.env.DB.prepare("SELECT name, size FROM artifacts WHERE project_id = ?").bind(id).all();
+
+  // Get live status from DO
+  const doId = c.env.PROJECT_COORDINATOR.idFromName(id);
+  const stub = c.env.PROJECT_COORDINATOR.get(doId);
+  const doStatusRes = await stub.fetch(new Request('http://do/status'));
+  const doStatus = await doStatusRes.json() as any;
+
+  return c.json({
+    project,
+    assets: assets.results,
+    activeJob: jobs.results[0] || null,
+    artifacts: artifacts.results,
+    logs: logs.results,
+    liveProgress: doStatus.progress,
+    liveStatus: doStatus.jobStatus
+  });
+});
+
 // --- Asset / Upload Routes ---
 
 app.post('/api/projects/:projectId/assets', async (c) => {
@@ -112,6 +140,24 @@ app.post('/api/assets/:id/uploaded', async (c) => {
     "UPDATE assets SET status = 'uploaded' WHERE id = ?"
   ).bind(id).run();
   return c.json({ success: true });
+});
+
+app.get('/api/projects/:projectId/artifacts/:name', async (c) => {
+  const projectId = c.req.param('projectId');
+  const name = c.req.param('name');
+  
+  const storageKey = `projects/${projectId}/artifacts/${name}`;
+  const object = await c.env.BUCKET.get(storageKey);
+
+  if (!object) {
+    return c.json({ error: 'Artifact not found' }, 404);
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+
+  return new Response(object.body, { headers });
 });
 
 // --- Job / Workflow Routes ---

@@ -1,58 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { db, RepoData, PendingRepoData } from '../../utils/db';
 import { useTremStore } from '../../store/useTremStore';
-import { useRepos } from '../../hooks/useQueries';
-import { useBackgroundIngestionStore } from '../../services/backgroundIngestion';
+import { useRepos, useProjects } from '../../hooks/useQueries';
+// We do not need backgroundIngestionStore here for active jobs, handled by react-query
 
-// Component to display active background ingestion jobs
-const ActiveJobsList: React.FC<{ isCollapsed: boolean; onNavigate: any }> = ({ isCollapsed, onNavigate }) => {
-  const activeJobIds = useBackgroundIngestionStore(state => state.activeJobs);
-  const [jobs, setJobs] = useState<PendingRepoData[]>([]);
+// Cloudflare Native Active Jobs
+const ActiveJobsList: React.FC<{ isCollapsed: boolean; onNavigate: any, projects: any[] }> = ({ isCollapsed, onNavigate, projects }) => {
+  // Filter for projects that have an active job or are not completed
+  const activeProjects = projects.filter(p => p.status !== 'completed' && p.status !== 'failed');
 
-  useEffect(() => {
-    const loadJobs = async () => {
-      const all = await Promise.all(activeJobIds.map(id => db.getPendingRepo(id)));
-      setJobs(all.filter(j => !!j) as PendingRepoData[]);
-    };
-    loadJobs();
-    const interval = setInterval(loadJobs, 2000);
-    return () => clearInterval(interval);
-  }, [activeJobIds]);
-
-  if (jobs.length === 0) return null;
-
-  const handleDelete = async (e: React.MouseEvent, jobId: string) => {
-    e.stopPropagation(); // Prevent navigating to the job
-    if (confirm('Delete this pending job? This cannot be undone.')) {
-      await db.deletePendingRepo(jobId);
-      // Jobs list will auto-update on next poll
-    }
-  };
+  if (activeProjects.length === 0) return null;
 
   return (
     <ul className="space-y-1 mb-2">
-      {jobs.map(job => (
-        <li key={job.id}>
+      {activeProjects.map(project => (
+        <li key={project.id}>
           <div
             className={`w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md bg-primary/10 text-primary font-medium border border-primary/20 ${isCollapsed ? 'justify-center' : ''}`}
           >
             <button
-              onClick={() => onNavigate(`create-repo/${job.id}`)}
+              onClick={() => onNavigate(`create-repo/${project.id}`)}
               className="flex items-center gap-2 flex-1 min-w-0 text-left"
-              title={isCollapsed ? `Ingesting: ${job.name}` : ''}
+              title={isCollapsed ? `Processing: ${project.name}` : ''}
             >
               <span className="material-icons-outlined text-sm animate-spin">sync</span>
-              {!isCollapsed && <span className="truncate">Ingesting: {job.name}</span>}
+              {!isCollapsed && <span className="truncate">Processing: {project.name}</span>}
             </button>
-            {!isCollapsed && (
-              <button
-                onClick={(e) => handleDelete(e, job.id)}
-                className="material-icons-outlined text-sm text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded p-1 transition-colors"
-                title="Delete job"
-              >
-                close
-              </button>
-            )}
           </div>
         </li>
       ))}
@@ -70,9 +43,12 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelectRepo }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const repoData = useTremStore((state) => state.repoData);
-  const { data: repos = [] } = useRepos();
+  
+  // Fetch both IndexedDB repos (legacy) and Cloudflare Projects
+  const { data: legacyRepos = [] } = useRepos();
+  const { data: cfProjects = [] } = useProjects();
 
-  const handleRepoClick = (repo: RepoData) => {
+  const handleRepoClick = (repo: any) => {
     if (onSelectRepo) {
       onSelectRepo(repo);
     }
@@ -148,7 +124,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
             {!isCollapsed && (
               <h3 className="px-2 text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-gray-500 mb-2 mt-2 font-bold whitespace-nowrap overflow-hidden">Active Processing</h3>
             )}
-            <ActiveJobsList isCollapsed={isCollapsed} onNavigate={onNavigate} />
+            <ActiveJobsList isCollapsed={isCollapsed} onNavigate={onNavigate} projects={cfProjects} />
             <ul className="space-y-1">
               <li>
                 <button onClick={() => onNavigate('timeline')} className={`w-full text-left flex items-center gap-3 px-2 py-2 text-sm rounded-md text-slate-600 dark:text-gray-400 hover:bg-slate-100 dark:hover:bg-white/5 dark:hover:text-white transition-colors group ${isCollapsed ? 'justify-center' : ''}`} title={isCollapsed ? `Edit: ${repoData?.name || 'project'}` : ""}>
@@ -165,10 +141,31 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
               <h3 className="px-2 text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-gray-500 mb-2 font-bold whitespace-nowrap overflow-hidden">Video Repos</h3>
             )}
             <ul className="space-y-1">
-              {repos.length === 0 && !isCollapsed && (
+              {legacyRepos.length === 0 && cfProjects.length === 0 && !isCollapsed && (
                 <li className="px-2 py-2 text-xs text-slate-400 italic">No repositories yet.</li>
               )}
-              {repos.map((repo) => (
+              {cfProjects.filter((p: any) => p.status === 'completed').map((project: any) => (
+                <li key={`cf-${project.id}`}>
+                  <button
+                    onClick={() => handleRepoClick({ id: project.id, name: project.name, brief: project.brief, created: new Date(project.created_at).getTime() })}
+                    className={`
+                      w-full flex items-center gap-3 px-3 py-2 rounded-lg 
+                      text-sm font-medium transition-colors
+                      ${repoData?.id === project.id 
+                        ? 'bg-primary/20 text-primary dark:bg-primary/20 dark:text-primary' 
+                        : 'text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-zinc-800 hover:text-slate-900 dark:hover:text-white'}
+                      ${isCollapsed ? 'justify-center' : ''}
+                    `}
+                    title={isCollapsed ? project.name : ''}
+                  >
+                    <span className="material-icons-outlined text-lg">folder</span>
+                    {!isCollapsed && <span className="truncate">{project.name} (CF)</span>}
+                  </button>
+                </li>
+              ))}
+              
+              {/* Legacy IndexedDB Repositories */}
+              {legacyRepos.map((repo) => (
                 <li key={repo.id}>
                   <button
                     onClick={() => handleRepoClick(repo)}

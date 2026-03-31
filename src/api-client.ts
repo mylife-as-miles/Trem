@@ -15,6 +15,16 @@ export const apiClient = {
     return res.json();
   },
 
+  async getProjectPayload(id: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${id}/payload`);
+    if (!res.ok) throw new Error('Failed to fetch project payload');
+    return res.json();
+  },
+
+  getArtifactUrl(projectId: string, artifactName: string) {
+    return `${API_BASE}/api/projects/${projectId}/artifacts/${artifactName}`;
+  },
+
   async createProject(name: string, brief?: string) {
     const res = await fetch(`${API_BASE}/api/projects`, {
       method: 'POST',
