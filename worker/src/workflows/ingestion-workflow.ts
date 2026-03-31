@@ -384,6 +384,12 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
       await step.do('generate_artifacts', async () => {
         await logProgress('Generating repository artifacts...', 85, 'generating_artifacts');
 
+        // R2 artifact keys are stable per project, so keep D1 in sync by
+        // replacing the prior artifact rows on each fresh ingest.
+        await this.env.DB.prepare(
+          "DELETE FROM artifacts WHERE project_id = ?"
+        ).bind(projectId).run();
+
         // Get project info
         const project = await this.env.DB.prepare(
           "SELECT name, brief FROM projects WHERE id = ?"
