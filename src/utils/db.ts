@@ -7,6 +7,8 @@ export interface RepoData {
     brief: string;
     assets: any[];
     fileSystem: any[];
+    commits?: any[];
+    status?: string;
     created: number;
 }
 

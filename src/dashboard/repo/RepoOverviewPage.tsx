@@ -93,29 +93,34 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
       if (repoData.fileSystem) {
         setFileSystem(repoData.fileSystem);
 
-        // Extract activity log from commits folder
-        const commitsFolder = repoData.fileSystem.find((node: FileNode) => node.name === 'commits');
-        if (commitsFolder && commitsFolder.children) {
-          const activities: ActivityLogEntry[] = commitsFolder.children
-            .map((commitFile: FileNode) => {
-              if (commitFile.type === 'file' && commitFile.content) {
-                try {
-                  const commitData = JSON.parse(commitFile.content);
-                  return {
-                    agent: commitData.author || 'Trem-AI',
-                    message: commitData.message || 'Repository update',
-                    timestamp: commitData.timestamp || Date.now()
-                  };
-                } catch (e) {
-                  return null;
+        // If repoData has commits property (from backend payload), use it directly
+        if (repoData.commits && repoData.commits.length > 0) {
+          setActivityLog(repoData.commits);
+        } else {
+          // Extract activity log from commits folder (Legacy/Local format)
+          const commitsFolder = repoData.fileSystem.find((node: FileNode) => node.name === 'commits');
+          if (commitsFolder && commitsFolder.children) {
+            const activities: ActivityLogEntry[] = commitsFolder.children
+              .map((commitFile: FileNode) => {
+                if (commitFile.type === 'file' && commitFile.content) {
+                  try {
+                    const commitData = JSON.parse(commitFile.content);
+                    return {
+                      agent: commitData.author || 'Trem-AI',
+                      message: commitData.message || 'Repository update',
+                      timestamp: commitData.timestamp || Date.now()
+                    };
+                  } catch (e) {
+                    return null;
+                  }
                 }
-              }
-              return null;
-            })
-            .filter((entry): entry is ActivityLogEntry => entry !== null)
-            .sort((a, b) => b.timestamp - a.timestamp); // Most recent first
+                return null;
+              })
+              .filter((entry): entry is ActivityLogEntry => entry !== null)
+              .sort((a, b) => b.timestamp - a.timestamp); // Most recent first
 
-          setActivityLog(activities);
+            setActivityLog(activities);
+          }
         }
       } else {
         // Fallback to legacy format if fileSystem is missing

@@ -41,13 +41,44 @@ const App: React.FC = () => {
         }
     }, [fetchedRepo, setRepoData]);
 
-    // Sync Query Data (Backend/UUID) to Store
     useEffect(() => {
         if (projectPayload && activeProjectId) {
             try {
-                const fs = typeof projectPayload.project.file_system === 'string' 
-                    ? JSON.parse(projectPayload.project.file_system) 
-                    : (projectPayload.project.file_system || []);
+                // Construct a file system tree from artifacts and assets
+                const assetFiles = projectPayload.assets?.map((a: any) => ({
+                    id: a.id,
+                    name: a.name || `${a.id}.mp4`,
+                    type: 'file' as const,
+                    icon: 'movie',
+                    iconColor: 'text-primary'
+                })) || [];
+
+                const artifactFiles = projectPayload.artifacts?.map((a: any) => ({
+                    id: a.name,
+                    name: a.name,
+                    type: 'file' as const,
+                    icon: 'description',
+                    iconColor: 'text-emerald-400'
+                })) || [];
+
+                const fs: any[] = [
+                    {
+                        id: 'media',
+                        name: 'media',
+                        type: 'folder',
+                        locked: true,
+                        children: [
+                            { id: 'raw_footage', name: 'raw_footage', type: 'folder', children: assetFiles },
+                            { id: 'proxies', name: 'proxies', type: 'folder', children: [] }
+                        ]
+                    },
+                    {
+                        id: 'artifacts',
+                        name: 'artifacts',
+                        type: 'folder',
+                        children: artifactFiles
+                    }
+                ];
 
                 const transformedRepo: RepoData = {
                     id: projectPayload.project.id,
@@ -55,11 +86,17 @@ const App: React.FC = () => {
                     brief: projectPayload.project.brief || '',
                     assets: projectPayload.assets || [],
                     fileSystem: fs,
+                    commits: projectPayload.logs?.map((l: any) => ({
+                        agent: l.actor || 'Trem-AI',
+                        message: l.message,
+                        timestamp: l.created_at * 1000
+                    })) || [],
+                    status: projectPayload.activeJob?.status || 'idle',
                     created: projectPayload.project.created_at ? (projectPayload.project.created_at * 1000) : Date.now()
                 };
                 setRepoData(transformedRepo);
             } catch (e) {
-                console.error("Failed to parse backend project filesystem/data", e);
+                console.error("Failed to sync backend project payload", e);
             }
         }
     }, [projectPayload, activeProjectId, setRepoData]);
