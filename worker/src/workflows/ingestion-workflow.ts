@@ -67,6 +67,15 @@ const createAgentStates = (activeAssetCount: number): AgentState[] =>
 export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> {
   async run(event: WorkflowEvent<IngestionParams>, step: WorkflowStep) {
     const { projectId, jobId } = event.payload;
+    console.log(`[IngestionWorkflow] Starting run for project: ${projectId}, job: ${jobId}`);
+    
+    // Check if DB is bound
+    if (!this.env.DB) {
+      console.error(`[IngestionWorkflow] DB binding NOT FOUND!`);
+    } else {
+      console.log(`[IngestionWorkflow] DB binding exists.`);
+    }
+
 
     const insertEventLog = async (message: string, level: 'info' | 'warn' | 'error' = 'info') => {
       await this.env.DB.prepare(

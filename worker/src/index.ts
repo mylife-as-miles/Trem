@@ -33,6 +33,35 @@ type ExistingJob = {
 
 const app = new Hono<{ Bindings: Env }>();
 
+app.get('/api/diag/db', async (c) => {
+  try {
+    const { results: tables } = await c.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
+    const { results: projectCount } = await c.env.DB.prepare("SELECT count(*) as count FROM projects").all();
+    const { results: assetCount } = await c.env.DB.prepare("SELECT count(*) as count FROM assets").all();
+    const { results: jobCount } = await c.env.DB.prepare("SELECT count(*) as count FROM jobs").all();
+    
+    return c.json({
+      status: 'ok',
+      tables: tables.map((t: any) => t.name),
+      counts: {
+        projects: projectCount[0]?.count,
+        assets: assetCount[0]?.count,
+        jobs: jobCount[0]?.count
+      },
+      env: {
+        has_db: !!c.env.DB,
+        has_bucket: !!c.env.BUCKET,
+        has_workflow: !!c.env.INGESTION_WORKFLOW
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return c.json({ status: 'error', message: err.message, stack: err.stack }, 500);
+  }
+});
+
+
+
 app.use('*', cors());
 
 const ACTIVE_WORKFLOW_STATUSES = new Set<WorkflowInstanceStatus>(['queued', 'running', 'paused', 'waiting']);
