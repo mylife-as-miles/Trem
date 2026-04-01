@@ -36,6 +36,18 @@ type QueueAssetPreview = {
   name: string;
 };
 
+type CommitSummary = {
+  id: string;
+  parent: string | null;
+  message: string;
+  author: string;
+  timestamp: string | number;
+  branch: string;
+  hashtags: string[];
+  artifacts?: Record<string, unknown>;
+  state?: Record<string, unknown>;
+};
+
 const app = new Hono<{ Bindings: Env }>();
 
 app.get('/api/diag/db', async (c) => {
@@ -71,6 +83,7 @@ app.use('*', cors());
 
 const ACTIVE_WORKFLOW_STATUSES = new Set<WorkflowInstanceStatus>(['queued', 'running', 'paused', 'waiting']);
 const ACTIVE_COORDINATOR_STATUSES = new Set(['queued', 'running', 'transcribing', 'analyzing']);
+const COMMIT_ARTIFACT_PATTERN = /^commits\/(\d{4})\.json$/;
 
 const createQueuedAgentStates = (assets: QueueAssetPreview[]) =>
   Array.from({ length: 4 }, (_, index) => {
@@ -83,6 +96,79 @@ const createQueuedAgentStates = (assets: QueueAssetPreview[]) =>
       completedCount: 0,
     };
   });
+
+const isCommitArtifact = (name: string) => COMMIT_ARTIFACT_PATTERN.test(name);
+
+const normalizeCommitSequence = (name: string) => {
+  const normalized = name.replace(/\\/g, '/');
+  const match = normalized.match(COMMIT_ARTIFACT_PATTERN);
+  return match ? Number(match[1]) : 0;
+};
+
+const getProjectCommits = async (env: Env, projectId: string): Promise<CommitSummary[]> => {
+  const { results } = await env.DB.prepare(
+    "SELECT name, storage_key FROM artifacts WHERE project_id = ? AND name GLOB 'commits/[0-9][0-9][0-9][0-9].json' ORDER BY name DESC"
+  ).bind(projectId).all<{ name: string; storage_key: string }>();
+
+  const commits = await Promise.all(
+    results.map(async (artifact): Promise<CommitSummary | null> => {
+      const object = await env.BUCKET.get(artifact.storage_key);
+      if (!object) return null;
+
+      try {
+        const parsed = await object.json<any>();
+        const fallbackId = artifact.name.split('/').pop()?.replace('.json', '') || artifact.name;
+        return {
+          id: typeof parsed?.id === 'string' ? parsed.id : fallbackId,
+          parent: typeof parsed?.parent === 'string' ? parsed.parent : null,
+          message: typeof parsed?.message === 'string' ? parsed.message : 'feat: update repository analysis',
+          author: typeof parsed?.author === 'string' ? parsed.author : 'Trem-AI',
+          timestamp: parsed?.timestamp || Date.now(),
+          branch: typeof parsed?.branch === 'string' ? parsed.branch : 'main',
+          hashtags: Array.isArray(parsed?.hashtags) ? parsed.hashtags.map((tag: unknown) => String(tag)) : [],
+          artifacts: parsed?.artifacts ?? parsed?.state,
+          state: parsed?.state,
+        } satisfies CommitSummary;
+      } catch (error) {
+        return null;
+      }
+    })
+  );
+
+  const validCommits = commits.filter((commit): commit is CommitSummary => commit !== null);
+
+  return validCommits
+    .sort((a, b) => {
+      const aTime = new Date(a.timestamp).getTime();
+      const bTime = new Date(b.timestamp).getTime();
+      if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
+        return bTime - aTime;
+      }
+      return normalizeCommitSequence(b.id) - normalizeCommitSequence(a.id);
+    });
+};
+
+const buildObjectResponse = async (
+  env: Env,
+  storageKey: string,
+  fallbackContentType?: string,
+) => {
+  const object = await env.BUCKET.get(storageKey);
+
+  if (!object) {
+    return null;
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+
+  if (fallbackContentType && !headers.get('content-type')) {
+    headers.set('content-type', fallbackContentType);
+  }
+
+  return new Response(object.body, { headers });
+};
 
 const getCoordinatorStub = (env: Env, projectId: string) => {
   const doId = env.PROJECT_COORDINATOR.idFromName(projectId);
@@ -277,6 +363,7 @@ app.get('/api/projects/:id', async (c) => {
   const assets = await c.env.DB.prepare("SELECT * FROM assets WHERE project_id = ?").bind(id).all();
   const jobs = await c.env.DB.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").bind(id).all();
   const logs = await c.env.DB.prepare("SELECT * FROM event_logs WHERE project_id = ? ORDER BY created_at DESC LIMIT 50").bind(id).all();
+  const commits = await getProjectCommits(c.env, id);
 
   // Get live status from DO
   const doStatus = await getCoordinatorStatus(c.env, id);
@@ -285,6 +372,7 @@ app.get('/api/projects/:id', async (c) => {
     project,
     assets: assets.results,
     activeJob: jobs.results[0] || null,
+    commits,
     logs: logs.results,
     liveProgress: doStatus.progress,
     liveStatus: doStatus.jobStatus,
@@ -303,6 +391,7 @@ app.get('/api/projects/:id/payload', async (c) => {
   const jobs = await c.env.DB.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").bind(id).all();
   const logs = await c.env.DB.prepare("SELECT * FROM event_logs WHERE project_id = ? ORDER BY created_at ASC").bind(id).all();
   const artifacts = await c.env.DB.prepare("SELECT name, size FROM artifacts WHERE project_id = ?").bind(id).all();
+  const commits = await getProjectCommits(c.env, id);
 
   // Get live status from DO
   const doStatus = await getCoordinatorStatus(c.env, id);
@@ -312,6 +401,7 @@ app.get('/api/projects/:id/payload', async (c) => {
     assets: assets.results,
     activeJob: jobs.results[0] || null,
     artifacts: artifacts.results,
+    commits,
     logs: logs.results,
     liveProgress: doStatus.progress,
     liveStatus: doStatus.jobStatus,
@@ -375,22 +465,66 @@ app.post('/api/assets/:id/uploaded', async (c) => {
   return c.json({ success: true });
 });
 
-app.get('/api/projects/:projectId/artifacts/:name', async (c) => {
-  const projectId = c.req.param('projectId');
-  const name = c.req.param('name');
-  
-  const storageKey = `projects/${projectId}/artifacts/${name}`;
-  const object = await c.env.BUCKET.get(storageKey);
+app.get('/api/assets/:id/content', async (c) => {
+  const id = c.req.param('id');
+  const asset = await c.env.DB.prepare(
+    "SELECT storage_key, type FROM assets WHERE id = ?"
+  ).bind(id).first<{ storage_key: string | null; type: string | null }>();
 
-  if (!object) {
+  if (!asset?.storage_key) {
+    return c.json({ error: 'Asset not found' }, 404);
+  }
+
+  const response = await buildObjectResponse(c.env, asset.storage_key, asset.type || 'application/octet-stream');
+  if (!response) {
+    return c.json({ error: 'Asset not found' }, 404);
+  }
+
+  return response;
+});
+
+app.get('/api/projects/:projectId/artifact', async (c) => {
+  const projectId = c.req.param('projectId');
+  const name = c.req.query('name');
+
+  if (!name) {
+    return c.json({ error: 'Artifact name is required' }, 400);
+  }
+
+  const artifact = await c.env.DB.prepare(
+    "SELECT storage_key, content_type FROM artifacts WHERE project_id = ? AND name = ?"
+  ).bind(projectId, name).first<{ storage_key: string; content_type: string | null }>();
+
+  if (!artifact?.storage_key) {
     return c.json({ error: 'Artifact not found' }, 404);
   }
 
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('etag', object.httpEtag);
+  const response = await buildObjectResponse(c.env, artifact.storage_key, artifact.content_type || 'application/octet-stream');
+  if (!response) {
+    return c.json({ error: 'Artifact not found' }, 404);
+  }
 
-  return new Response(object.body, { headers });
+  return response;
+});
+
+app.get('/api/projects/:projectId/artifacts/:name', async (c) => {
+  const projectId = c.req.param('projectId');
+  const name = c.req.param('name');
+
+  const artifact = await c.env.DB.prepare(
+    "SELECT storage_key, content_type FROM artifacts WHERE project_id = ? AND name = ?"
+  ).bind(projectId, name).first<{ storage_key: string; content_type: string | null }>();
+
+  if (!artifact?.storage_key) {
+    return c.json({ error: 'Artifact not found' }, 404);
+  }
+
+  const response = await buildObjectResponse(c.env, artifact.storage_key, artifact.content_type || 'application/octet-stream');
+  if (!response) {
+    return c.json({ error: 'Artifact not found' }, 404);
+  }
+
+  return response;
 });
 
 // --- Job / Workflow Routes ---

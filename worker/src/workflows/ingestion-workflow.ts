@@ -43,9 +43,19 @@ type TranscriptionResult = {
   srt: string;
 };
 
+type CommitArtifact = {
+  id: string;
+  parent: string | null;
+  timestamp: string;
+  message: string;
+  hashtags: string[];
+  state: Record<string, string | string[] | null>;
+};
+
 const REPLICATE_WHISPER_VERSION = '8099696689d249cf8b122d833c36ac3f75505c666a395ca40ef26f68e7d3d16e';
 const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024; // 25MB for Replicate
 const MAX_INGEST_AGENTS = 4;
+const COMMIT_ARTIFACT_PATTERN = /^commits\/(\d{4})\.json$/;
 
 type AgentState = {
   slot: number;
@@ -63,6 +73,222 @@ const createAgentStates = (activeAssetCount: number): AgentState[] =>
     assetName: null,
     completedCount: 0,
   }));
+
+const parseCommitSequence = (name: string) => {
+  const match = name.match(COMMIT_ARTIFACT_PATTERN);
+  return match ? Number(match[1]) : null;
+};
+
+const toRepoSlug = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'trem-repository';
+
+const defaultCommitMessage = ({
+  isInitial,
+  repoName,
+}: {
+  isInitial: boolean;
+  repoName: string;
+}) => {
+  const slug = toRepoSlug(repoName);
+  return isInitial
+    ? `feat: initialize ${slug} repository analysis`
+    : `feat: update ${slug} repository analysis`;
+};
+
+const normalizeCommitMessage = (message: unknown, fallback: string) => {
+  if (typeof message !== 'string') return fallback;
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  if (!normalized) return fallback;
+  if (/^[a-z]+(\([^)]+\))?:\s+.+$/i.test(normalized)) {
+    return normalized;
+  }
+  return `feat: ${normalized.charAt(0).toLowerCase()}${normalized.slice(1)}`;
+};
+
+const normalizeHashtags = (hashtags: unknown) => {
+  if (!Array.isArray(hashtags)) {
+    return ['#trem', '#ai-generated'];
+  }
+
+  const cleaned = hashtags
+    .map((tag) => String(tag || '').trim())
+    .filter(Boolean)
+    .map((tag) => (tag.startsWith('#') ? tag : `#${tag}`));
+
+  return cleaned.length > 0
+    ? Array.from(new Set(cleaned)).slice(0, 6)
+    : ['#trem', '#ai-generated'];
+};
+
+const buildCommitArtifacts = (hasCaptions: boolean) => {
+  const artifacts: Record<string, string | string[]> = {
+    repo: 'repo.json',
+    scenes: 'scenes/scenes.json',
+    timeline: 'timeline/base.otio.json',
+    metadata: ['metadata/video.md', 'metadata/scenes.md'],
+    dag: 'dag/ingest.json',
+  };
+
+  if (hasCaptions) {
+    artifacts.subtitles = 'captions/captions.srt';
+  }
+
+  return artifacts;
+};
+
+const buildCommitState = (hasCaptions: boolean) => ({
+  repo: 'repo.json',
+  timeline: 'timeline/base.otio.json',
+  scenes: 'scenes/scenes.json',
+  captions: hasCaptions ? 'captions/captions.srt' : null,
+  metadata: ['metadata/video.md', 'metadata/scenes.md'],
+  dag: 'dag/ingest.json',
+});
+
+const buildFallbackSynthesis = ({
+  projectId,
+  repoName,
+  processedAssets,
+  commitId,
+  parentCommitId,
+}: {
+  projectId: string;
+  repoName: string;
+  processedAssets: Array<{ id: string; name: string; type: string; metadata: AssetMetadata }>;
+  commitId: string;
+  parentCommitId: string | null;
+}) => ({
+  provenance: {
+    model: 'trem-fallback',
+    timestamp: new Date().toISOString(),
+    input_hash: `${projectId}:${commitId}`,
+    agent_version: 'trem-core-v3',
+  },
+  confidence: 0.32,
+  detection_method: 'fallback-analysis',
+  repo: {
+    name: toRepoSlug(repoName),
+    brief: `Processed ${processedAssets.length} asset(s). Trem generated a conservative repository scaffold because Gemini synthesis was unavailable.`,
+    created: Date.now(),
+    version: '1.0.0',
+    pipeline: 'trem-video-pipeline-v2',
+  },
+  scenes: { scenes: generateFallbackScenes(processedAssets) },
+  timeline: generateFallbackTimeline(processedAssets),
+    captions_srt: processedAssets.map((asset) => asset.metadata.srt || '').filter(Boolean).join('\n\n'),
+    metadata: {
+      video_md: `# ${repoName}\n\nFallback repository scaffold generated for ${processedAssets.length} asset(s).`,
+      scenes_md: processedAssets.map((asset, index) => `## Scene ${index + 1}\n- Asset: ${asset.name}\n- Notes: ${asset.metadata.description}`).join('\n\n'),
+  },
+  dag: {
+    stage: 'fallback-ingest',
+    assets: processedAssets.map((asset) => asset.id),
+  },
+  commit: {
+    id: commitId,
+    parent: parentCommitId,
+    timestamp: new Date().toISOString(),
+    message: defaultCommitMessage({ isInitial: !parentCommitId, repoName }),
+  },
+});
+
+const normalizeRepoSynthesis = ({
+  synthesis,
+  projectId,
+  repoName,
+  commitId,
+  parentCommitId,
+}: {
+  synthesis: any;
+  projectId: string;
+  repoName: string;
+  commitId: string;
+  parentCommitId: string | null;
+}) => {
+  const timestamp = new Date().toISOString();
+  const captions = typeof synthesis?.captions_srt === 'string' ? synthesis.captions_srt : '';
+  const commit: CommitArtifact = {
+    id: commitId,
+    parent: parentCommitId,
+    timestamp,
+    message: normalizeCommitMessage(
+      synthesis?.commit?.message,
+      defaultCommitMessage({ isInitial: !parentCommitId, repoName }),
+    ),
+    hashtags: normalizeHashtags(synthesis?.commit?.hashtags),
+    state: buildCommitState(Boolean(captions)),
+  };
+
+  return {
+    provenance: {
+      model: synthesis?.provenance?.model || 'gemini-3.1-pro-preview',
+      timestamp,
+      input_hash: synthesis?.provenance?.input_hash || `${projectId}:${commitId}`,
+      agent_version: synthesis?.provenance?.agent_version || 'trem-core-v3',
+    },
+    confidence: typeof synthesis?.confidence === 'number' ? synthesis.confidence : 0.55,
+    detection_method: synthesis?.detection_method || 'vision+audio',
+    repo: {
+      name: typeof synthesis?.repo?.name === 'string' && synthesis.repo.name.trim()
+        ? synthesis.repo.name.trim()
+        : toRepoSlug(repoName),
+      brief: typeof synthesis?.repo?.brief === 'string' && synthesis.repo.brief.trim()
+        ? synthesis.repo.brief.trim()
+        : `Repository intelligence generated for ${repoName}.`,
+      created: typeof synthesis?.repo?.created === 'number' ? synthesis.repo.created : Date.now(),
+      version: typeof synthesis?.repo?.version === 'string' ? synthesis.repo.version : '1.0.0',
+      pipeline: typeof synthesis?.repo?.pipeline === 'string' ? synthesis.repo.pipeline : 'trem-video-pipeline-v2',
+    },
+    scenes: synthesis?.scenes && Array.isArray(synthesis.scenes.scenes)
+      ? synthesis.scenes
+      : { scenes: [] },
+    captions_srt: captions,
+    metadata: {
+      video_md: typeof synthesis?.metadata?.video_md === 'string' ? synthesis.metadata.video_md : '',
+      scenes_md: typeof synthesis?.metadata?.scenes_md === 'string' ? synthesis.metadata.scenes_md : '',
+    },
+    timeline: synthesis?.timeline || generateFallbackTimeline([]),
+    dag: synthesis?.dag || {},
+    commit,
+  };
+};
+
+const getCommitLineage = async (env: Env, projectId: string) => {
+  const { results } = await env.DB.prepare(
+    "SELECT name FROM artifacts WHERE project_id = ? AND name GLOB 'commits/[0-9][0-9][0-9][0-9].json' ORDER BY name ASC"
+  ).bind(projectId).all<{ name: string }>();
+
+  const sequences = results
+    .map((artifact) => parseCommitSequence(artifact.name))
+    .filter((value): value is number => value !== null);
+
+  const latestSequence = sequences.length > 0 ? Math.max(...sequences) : 0;
+  const nextSequence = latestSequence + 1;
+
+  return {
+    nextCommitId: String(nextSequence).padStart(4, '0'),
+    parentCommitId: latestSequence > 0 ? String(latestSequence).padStart(4, '0') : null,
+  };
+};
+
+const clearGeneratedArtifacts = async (env: Env, projectId: string) => {
+  const { results } = await env.DB.prepare(
+    "SELECT storage_key FROM artifacts WHERE project_id = ? AND name NOT GLOB 'commits/[0-9][0-9][0-9][0-9].json'"
+  ).bind(projectId).all<{ storage_key: string }>();
+
+  await Promise.all(
+    results
+      .filter((artifact) => artifact.storage_key)
+      .map((artifact) => env.BUCKET.delete(artifact.storage_key))
+  );
+
+  await env.DB.prepare(
+    "DELETE FROM artifacts WHERE project_id = ? AND name NOT GLOB 'commits/[0-9][0-9][0-9][0-9].json'"
+  ).bind(projectId).run();
+};
 
 export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> {
   async run(event: WorkflowEvent<IngestionParams>, step: WorkflowStep) {
@@ -110,6 +336,12 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
     };
 
     try {
+      const project = await this.env.DB.prepare(
+        "SELECT name FROM projects WHERE id = ?"
+      ).bind(projectId).first<{ name: string }>();
+      const repoName = project?.name || `project-${projectId.slice(0, 8)}`;
+      const commitLineage = await getCommitLineage(this.env, projectId);
+
       // ============================================================
       // Step 1: PREPARE ASSETS
       // ============================================================
@@ -121,7 +353,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
         ).bind(Math.floor(Date.now() / 1000), projectId).run();
 
         const assetsRes = await this.env.DB.prepare(
-          "SELECT * FROM assets WHERE project_id = ? AND status IN ('uploaded', 'pending')"
+          "SELECT * FROM assets WHERE project_id = ? AND status IN ('uploaded', 'pending', 'ready')"
         ).bind(projectId).all<AssetRow>();
 
         if (assetsRes.results.length === 0) {
@@ -368,20 +600,19 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
         const durationSeconds = 0; // Estimation
 
         if (!this.env.GEMINI_API_KEY) {
-          return {
-            repo: {
-              name: `project-${projectId.slice(0, 8)}`,
-              brief: `Processed ${processedAssets.length} asset(s). Gemini API key not configured.`,
-              created: Date.now(),
-              version: '1.0.0',
-              pipeline: 'trem-video-pipeline-v2'
-            },
-            scenes: { scenes: generateFallbackScenes(processedAssets) },
-            timeline: generateFallbackTimeline(processedAssets),
-            captions_srt: '',
-            metadata: { video_md: '# Repository Overview\n\nGemini API not configured.', scenes_md: '' },
-            commit: { id: '0001', message: 'feat: fallback ingest' }
-          };
+          return normalizeRepoSynthesis({
+            synthesis: buildFallbackSynthesis({
+              projectId,
+              repoName,
+              processedAssets,
+              commitId: commitLineage.nextCommitId,
+              parentCommitId: commitLineage.parentCommitId,
+            }),
+            projectId,
+            repoName,
+            commitId: commitLineage.nextCommitId,
+            parentCommitId: commitLineage.parentCommitId,
+          });
         }
 
         await insertEventLog('Applying the Trem repository system prompt to generate scenes, captions, metadata, OTIO, DAG, commits, and repo output.');
@@ -391,12 +622,37 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
             duration: `${durationSeconds}s`,
             transcript: fullTranscript,
             assetContext,
-            projectId
+            projectId,
+            projectName: repoName,
+            nextCommitId: commitLineage.nextCommitId,
+            parentCommitId: commitLineage.parentCommitId,
           }
         );
 
+        if (!repoStructure) {
+          return normalizeRepoSynthesis({
+            synthesis: buildFallbackSynthesis({
+              projectId,
+              repoName,
+              processedAssets,
+              commitId: commitLineage.nextCommitId,
+              parentCommitId: commitLineage.parentCommitId,
+            }),
+            projectId,
+            repoName,
+            commitId: commitLineage.nextCommitId,
+            parentCommitId: commitLineage.parentCommitId,
+          });
+        }
+
         await insertEventLog(`Repository synthesis complete`);
-        return repoStructure;
+        return normalizeRepoSynthesis({
+          synthesis: repoStructure,
+          projectId,
+          repoName,
+          commitId: commitLineage.nextCommitId,
+          parentCommitId: commitLineage.parentCommitId,
+        });
       });
 
       // ============================================================
@@ -406,41 +662,28 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
         if (!synthesis) return;
         await logProgress('Generating repository artifacts...', 85, 'generating_artifacts');
 
-        await this.env.DB.prepare(
-          "DELETE FROM artifacts WHERE project_id = ?"
-        ).bind(projectId).run();
+        await clearGeneratedArtifacts(this.env, projectId);
 
         await storeArtifact(this.env, projectId, jobId, 'repo.json', synthesis.repo || {});
-        await storeArtifact(this.env, projectId, jobId, 'scenes.json', synthesis.scenes || {});
-        await storeArtifact(this.env, projectId, jobId, 'main.otio.json', synthesis.timeline || {});
+        await storeArtifact(this.env, projectId, jobId, 'scenes/scenes.json', synthesis.scenes || {});
+        await storeArtifact(this.env, projectId, jobId, 'timeline/base.otio.json', synthesis.timeline || {});
 
         if (synthesis.captions_srt) {
-          await storeArtifactRaw(this.env, projectId, jobId, 'captions.srt', synthesis.captions_srt, 'text/plain');
+          await storeArtifactRaw(this.env, projectId, jobId, 'captions/captions.srt', synthesis.captions_srt, 'text/plain');
         }
         if (synthesis.metadata?.video_md) {
-          await storeArtifactRaw(this.env, projectId, jobId, 'video.md', synthesis.metadata.video_md, 'text/markdown');
+          await storeArtifactRaw(this.env, projectId, jobId, 'metadata/video.md', synthesis.metadata.video_md, 'text/markdown');
         }
         if (synthesis.metadata?.scenes_md) {
-          await storeArtifactRaw(this.env, projectId, jobId, 'scenes.md', synthesis.metadata.scenes_md, 'text/markdown');
+          await storeArtifactRaw(this.env, projectId, jobId, 'metadata/scenes.md', synthesis.metadata.scenes_md, 'text/markdown');
         }
         if (synthesis.commit) {
-          await storeArtifact(this.env, projectId, jobId, '0001.json', synthesis.commit);
+          await storeArtifact(this.env, projectId, jobId, `commits/${synthesis.commit.id}.json`, synthesis.commit);
+          await insertEventLog(`Created commit ${synthesis.commit.id}: ${synthesis.commit.message}`);
         }
         if (synthesis.dag) {
-          await storeArtifact(this.env, projectId, jobId, 'ingest.json', synthesis.dag);
+          await storeArtifact(this.env, projectId, jobId, 'dag/ingest.json', synthesis.dag);
         }
-
-        const graphJson = {
-          projectId,
-          nodes: processedAssets.map(a => ({
-            id: a.id,
-            label: a.name,
-            type: a.type,
-            tags: a.metadata.tags,
-          })),
-          edges: [],
-        };
-        await storeArtifact(this.env, projectId, jobId, 'graph.json', graphJson);
 
         await insertEventLog(`Generated intelligence artifacts (OTIO, Commits, Metadata)`);
       });
@@ -520,25 +763,46 @@ async function storeArtifactRaw(env: Env, projectId: string, jobId: string, name
 // ============================================================
 
 function generateFallbackScenes(assets: Array<{ id: string; name: string; type: string; metadata: AssetMetadata }>) {
-  return assets.map((a, i) => ({
-    id: `scene_${i + 1}`,
-    label: `Scene ${i + 1} — ${a.name}`,
-    assetId: a.id,
-    description: a.metadata.description,
-  }));
+  return assets.map((asset, index) => {
+    const start = index * 5;
+    const end = start + 5;
+    return {
+      id: `scene-${String(index + 1).padStart(3, '0')}`,
+      start,
+      end,
+      summary: asset.metadata.description || `General scene coverage for ${asset.name}`,
+      emotion: 'neutral',
+      shot_type: 'medium',
+      motion: 'static',
+      audio_cues: asset.metadata.transcript ? ['dialogue'] : ['ambient'],
+      characters: [],
+      visual_notes: asset.metadata.tags || [],
+      confidence: 0.32,
+      agent_annotations: {},
+    };
+  });
 }
 
 function generateFallbackTimeline(assets: Array<{ id: string; name: string; type: string; metadata: AssetMetadata }>) {
+  const videoAssets = assets.filter((asset) => asset.type !== 'audio');
   return {
-    tracks: [{
-      name: 'V1',
-      items: assets.filter(a => a.type !== 'audio').map((a, i) => ({
-        assetId: a.id,
-        name: a.name,
-        startFrame: i * 300,
-        endFrame: (i + 1) * 300,
-      })),
-    }],
+    OTIO_SCHEMA: 'OpenTimelineIO.v1',
+    tracks: {
+      children: [
+        {
+          OTIO_SCHEMA: 'Track.v1',
+          kind: 'Video',
+          children: videoAssets.map((asset, index) => ({
+            OTIO_SCHEMA: 'Clip.v1',
+            name: `Clip_${String(index + 1).padStart(3, '0')}`,
+            source_range: {
+              start_time: { value: index * 150, rate: 30.0 },
+              duration: { value: 150, rate: 30.0 },
+            },
+          })),
+        },
+      ],
+    },
   };
 }
 
@@ -553,6 +817,9 @@ async function generateRepoWithGemini(
     transcript: string;
     assetContext: string;
     projectId: string;
+    projectName: string;
+    nextCommitId: string;
+    parentCommitId: string | null;
   }
 ): Promise<any> {
   const ai = new GoogleGenAI({ apiKey });
@@ -574,7 +841,7 @@ You excel at:
 - **Audio Transcript**: ${context.transcript || 'Not available'}
 - **Scene Boundaries**: Inferred from analysis
 - **Asset Context**: ${context.assetContext}
-- **Visual Context**: Visual features and temporal coherence inferred from asset metadata and transcript.
+- **Visual Context**: I have attached 0 keyframes from the video. Correlate these visual frames with the timestamps in the transcript to determine scene changes.
 
 ---
 
@@ -593,9 +860,9 @@ You must strictly adhere to these values for metadata fields to ensure downstrea
 - **Motion**: [static, pan, tilt, zoom, dolly, truck, handheld]
 
 # Versioning & State Evolution
-- **Commit History**: Generate a new commit ID (e.g., 0001) for this ingestion.
-- **State Diffing**: Only update files that have changed.
-- **Message**: Commit messages must describe the *change* (e.g., "feat: initial ingestion of ${context.projectId}").
+- **Commit History**: If a previous commit exists, you MUST generate the new commit ID "${context.nextCommitId}" and set the 'parent' field to ${context.parentCommitId ? `"${context.parentCommitId}"` : 'null'}.
+- **State Diffing**: Only update files that have changed. If a file is identical to the previous version, do not regenerate it; reference the existing file path.
+- **Message**: Commit messages must describe the *change* (e.g., "fix: adjust scene 2 boundary", "feat: refine emotion tags").
 
 ---
 
@@ -606,7 +873,7 @@ You must strictly adhere to these values for metadata fields to ensure downstrea
 4. Generate metadata/scenes.md
 5. Generate timeline/base.otio.json (Valid OTIO Schema)
 6. Generate dag/ingest.json
-7. Generate commits/0001.json
+7. Generate commits/${context.nextCommitId}.json
 8. Generate repo.json
 
 # Output Schema (Strict JSON)
@@ -614,17 +881,17 @@ You MUST output ONLY valid JSON matching this exact structure. No markdown, no c
 
 {
   "provenance": {
-    "model": "gemini-3.1-pro-preview",
-    "timestamp": "${new Date().toISOString()}",
-    "input_hash": "${context.projectId}",
-    "agent_version": "trem-core-v3"
+    "model": "string (e.g. gemini-3-flash-preview)",
+    "timestamp": "string (ISO 8601)",
+    "input_hash": "string (sha256 of inputs)",
+    "agent_version": "string (e.g. trem-core-v1)"
   },
   "confidence": 0.0,
-  "detection_method": "reasoning-analysis",
+  "detection_method": "string (vision+audio, vision-only, or audio-only)",
   "repo": {
-    "name": "project-${context.projectId}",
+    "name": "string (kebab-case repo name)",
     "brief": "string (1-2 sentence video summary)",
-    "created": ${Date.now()},
+    "created": "number (Unix timestamp)",
     "version": "1.0.0",
     "pipeline": "trem-video-pipeline-v2"
   },
@@ -633,15 +900,15 @@ You MUST output ONLY valid JSON matching this exact structure. No markdown, no c
       {
         "id": "scene-001",
         "start": 0.0,
-        "end": 0.0,
+        "end": 3.5,
         "summary": "string (concise visual description)",
         "emotion": "string (from ontology)",
         "shot_type": "string (from ontology)",
         "motion": "string (from ontology)",
-        "audio_cues": ["string"],
-        "characters": ["string"],
-        "visual_notes": ["string"],
-        "confidence": 1.0,
+        "audio_cues": ["string (music, dialogue, ambient, silence)"],
+        "characters": ["string (detected characters or subjects)"],
+        "visual_notes": ["string (lighting, color grade, composition notes)"],
+        "confidence": "number (0.0 - 1.0 confidence in scene boundaries and content)",
         "agent_annotations": {}
       }
     ]
@@ -664,7 +931,7 @@ You MUST output ONLY valid JSON matching this exact structure. No markdown, no c
                         "name": "Clip_001",
                         "source_range": {
                           "start_time": { "value": 0, "rate": 30.0 },
-                          "duration": { "value": 0, "rate": 30.0 }
+                          "duration": { "value": 105, "rate": 30.0 }
                         }
                     }
                 ]
@@ -674,10 +941,10 @@ You MUST output ONLY valid JSON matching this exact structure. No markdown, no c
   },
   "dag": {},
   "commit": {
-    "id": "0001",
-    "parent": null,
-    "timestamp": "${new Date().toISOString()}",
-    "message": "feat: ingest ${context.projectId}",
+    "id": "${context.nextCommitId}",
+    "parent": ${context.parentCommitId ? `"${context.parentCommitId}"` : 'null'},
+    "timestamp": "string (ISO 8601)",
+    "message": "string (conventional commit: feat: ingest 14s makeup transformation...)",
     "state": {
       "timeline": "timeline/base.otio.json",
       "scenes": "scenes/scenes.json",
@@ -688,14 +955,18 @@ You MUST output ONLY valid JSON matching this exact structure. No markdown, no c
       ],
       "dag": "dag/ingest.json"
     },
-    "hashtags": ["#tag1", "#tag2"]
+    "hashtags": ["#tag1", "#tag2", "#tag3"]
   }
 }
 
 ---
 
 # Hashtag Generation Rules
-Generate 4-6 hashtags based on actual content analysis.
+Generate 4-6 hashtags based on actual content analysis:
+- **Format**: #vertical, #horizontal, #square, #4k, #1080p
+- **Style**: #cinematic, #documentary, #vlog, #tutorial, #high-contrast, #low-key, #neon, #natural-light
+- **Content**: #glow-up, #transformation, #dance, #music, #dialogue, #b-roll, #timelapse, #action
+- **Platform**: #tiktok, #reels, #youtube-shorts, #social-media
 
 ---
 
@@ -704,7 +975,9 @@ Generate 4-6 hashtags based on actual content analysis.
 - IMPORTANT: For the 'captions_srt' and 'metadata' fields, you must properly escape all newlines (\\\\n) and double quotes (\\\\") so the JSON remains valid.
 - Scenes array must contain **multiple scenes** proportional to video length.
 - Be precise with timestamps (use decimals like 3.5, 7.25).
-- For OTIO 'source_range', use a default rate of 30.0 fps unless detected otherwise.
+- For OTIO 'source_range', use a default rate of 30.0 fps unless detected otherwise. Calculate 'value' as 'seconds * rate'.
+- Use the Asset Context to inform descriptions and tags.
+- If critical inputs are missing, infer conservatively and set 'confidence' accordingly.
 `;
 
   try {

@@ -15,6 +15,185 @@ import { RepoData } from './utils/db';
 import { useTremStore, ViewType } from './store/useTremStore';
 import { useRepo, useProjectPayload } from './hooks/useQueries';
 
+const COMMIT_FILE_PATTERN = /^commits\/\d{4}\.json$/;
+
+const normalizeTimestamp = (value: unknown) => {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+        const parsed = new Date(value).getTime();
+        return Number.isNaN(parsed) ? Date.now() : parsed;
+    }
+    return Date.now();
+};
+
+const artifactIconForName = (name: string) => {
+    if (/\.(mp4|mov|webm)$/i.test(name)) return { icon: 'movie', iconColor: 'text-primary' };
+    if (/\.(mp3|wav|m4a|aac|ogg)$/i.test(name)) return { icon: 'audiotrack', iconColor: 'text-amber-400' };
+    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(name)) return { icon: 'image', iconColor: 'text-fuchsia-400' };
+    if (isCommitArtifact(name)) return { icon: 'commit', iconColor: 'text-primary' };
+    if (name.endsWith('.md')) return { icon: 'description', iconColor: 'text-emerald-400' };
+    if (name.endsWith('.srt')) return { icon: 'subtitles', iconColor: 'text-amber-400' };
+    if (name.endsWith('.otio.json')) return { icon: 'movie_creation', iconColor: 'text-primary' };
+    if (name.endsWith('.json')) return { icon: 'data_object', iconColor: 'text-sky-400' };
+    return { icon: 'description', iconColor: 'text-emerald-400' };
+};
+
+const isCommitArtifact = (name: string) => COMMIT_FILE_PATTERN.test(name);
+
+const ensureFolderNode = (nodes: any[], pathSegments: string[]) => {
+    let currentLevel = nodes;
+    let currentPath = '';
+
+    for (const segment of pathSegments) {
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+        let folder = currentLevel.find((node: any) => node.type === 'folder' && node.name === segment);
+
+        if (!folder) {
+            folder = {
+                id: `folder:${currentPath}`,
+                path: currentPath,
+                name: segment,
+                type: 'folder' as const,
+                children: [],
+            };
+            currentLevel.push(folder);
+        }
+
+        currentLevel = folder.children;
+    }
+
+    return currentLevel;
+};
+
+const insertFileNode = (nodes: any[], path: string, fileNode: any) => {
+    const segments = path.split('/').filter(Boolean);
+    const fileName = segments.pop();
+    if (!fileName) return;
+
+    const parentLevel = ensureFolderNode(nodes, segments);
+    const existingIndex = parentLevel.findIndex((node: any) => node.type === 'file' && node.name === fileName);
+    const resolvedNode = {
+        ...fileNode,
+        id: fileNode.id || `file:${path}`,
+        path,
+        name: fileName,
+        type: 'file' as const,
+    };
+
+    if (existingIndex >= 0) {
+        parentLevel[existingIndex] = { ...parentLevel[existingIndex], ...resolvedNode };
+    } else {
+        parentLevel.push(resolvedNode);
+    }
+};
+
+const sortFileTree = (nodes: any[]): any[] =>
+    nodes
+        .slice()
+        .sort((a, b) => {
+            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+            return String(a.name).localeCompare(String(b.name));
+        })
+        .map((node) => node.type === 'folder'
+            ? { ...node, children: sortFileTree(node.children || []) }
+            : node);
+
+const buildBackendFileSystem = (projectPayload: any) => {
+    const projectId = String(projectPayload.project?.id || '');
+    const fileTree: any[] = [];
+
+    ensureFolderNode(fileTree, ['media', 'raw_footage']);
+    ensureFolderNode(fileTree, ['media', 'proxies']);
+
+    (projectPayload.assets || []).forEach((asset: any) => {
+        const assetName = String(asset.name || `${asset.id}.bin`);
+        const visuals = artifactIconForName(assetName);
+        insertFileNode(fileTree, `media/raw_footage/${assetName}`, {
+            id: `asset:${asset.id}`,
+            assetId: asset.id,
+            readonly: true,
+            contentUrl: apiClient.getAssetContentUrl(asset.id),
+            mimeType: asset.type,
+            icon: visuals.icon,
+            iconColor: visuals.iconColor,
+        });
+    });
+
+    const commitPathSet = new Set<string>();
+    (projectPayload.commits || []).forEach((commit: any) => {
+        const commitPath = `commits/${commit.id}.json`;
+        commitPathSet.add(commitPath);
+        const visuals = artifactIconForName(commitPath);
+        insertFileNode(fileTree, commitPath, {
+            id: `commit:${commit.id}`,
+            readonly: true,
+            content: JSON.stringify(commit, null, 2),
+            contentType: 'application/json',
+            icon: visuals.icon,
+            iconColor: visuals.iconColor,
+        });
+    });
+
+    (projectPayload.artifacts || []).forEach((artifact: any) => {
+        const artifactName = String(artifact.name || '');
+        if (!artifactName) return;
+
+        if (isCommitArtifact(artifactName)) {
+            commitPathSet.add(artifactName);
+            if (!(projectPayload.commits || []).some((commit: any) => `commits/${commit.id}.json` === artifactName)) {
+                const visuals = artifactIconForName(artifactName);
+                insertFileNode(fileTree, artifactName, {
+                    id: `artifact:${artifactName}`,
+                    readonly: true,
+                    contentUrl: apiClient.getArtifactContentUrl(projectId, artifactName),
+                    icon: visuals.icon,
+                    iconColor: visuals.iconColor,
+                });
+            }
+            return;
+        }
+
+        const visuals = artifactIconForName(artifactName);
+        insertFileNode(fileTree, artifactName, {
+            id: `artifact:${artifactName}`,
+            readonly: true,
+            size: artifact.size,
+            contentUrl: apiClient.getArtifactContentUrl(projectId, artifactName),
+            icon: visuals.icon,
+            iconColor: visuals.iconColor,
+        });
+    });
+
+    return sortFileTree(fileTree);
+};
+
+const buildBackendRepoData = (projectPayload: any): RepoData => {
+    const commits = (projectPayload.commits || [])
+        .slice()
+        .sort((a: any, b: any) => normalizeTimestamp(b.timestamp) - normalizeTimestamp(a.timestamp))
+        .map((commit: any) => ({
+            ...commit,
+            id: commit.id,
+            parent: commit.parent ?? null,
+            agent: commit.author || 'Trem-AI',
+            author: commit.author || 'Trem-AI',
+            message: commit.message || `Commit ${commit.id}`,
+            timestamp: normalizeTimestamp(commit.timestamp),
+            hashtags: Array.isArray(commit.hashtags) ? commit.hashtags : [],
+        }));
+
+    return {
+        id: projectPayload.project.id,
+        name: projectPayload.project.name,
+        brief: projectPayload.project.brief || '',
+        assets: projectPayload.assets || [],
+        fileSystem: buildBackendFileSystem(projectPayload),
+        commits,
+        status: projectPayload.liveStatus || projectPayload.activeJob?.status || 'idle',
+        created: projectPayload.project.created_at ? (projectPayload.project.created_at * 1000) : Date.now()
+    };
+};
+
 const App: React.FC = () => {
     // Global State
     const {
@@ -44,57 +223,7 @@ const App: React.FC = () => {
     useEffect(() => {
         if (projectPayload && activeProjectId) {
             try {
-                // Construct a file system tree from artifacts and assets
-                const assetFiles = projectPayload.assets?.map((a: any) => ({
-                    id: a.id,
-                    name: a.name || `${a.id}.mp4`,
-                    type: 'file' as const,
-                    icon: 'movie',
-                    iconColor: 'text-primary'
-                })) || [];
-
-                const artifactFiles = projectPayload.artifacts?.map((a: any) => ({
-                    id: a.name,
-                    name: a.name,
-                    type: 'file' as const,
-                    icon: 'description',
-                    iconColor: 'text-emerald-400'
-                })) || [];
-
-                const fs: any[] = [
-                    {
-                        id: 'media',
-                        name: 'media',
-                        type: 'folder',
-                        locked: true,
-                        children: [
-                            { id: 'raw_footage', name: 'raw_footage', type: 'folder', children: assetFiles },
-                            { id: 'proxies', name: 'proxies', type: 'folder', children: [] }
-                        ]
-                    },
-                    {
-                        id: 'artifacts',
-                        name: 'artifacts',
-                        type: 'folder',
-                        children: artifactFiles
-                    }
-                ];
-
-                const transformedRepo: RepoData = {
-                    id: projectPayload.project.id,
-                    name: projectPayload.project.name,
-                    brief: projectPayload.project.brief || '',
-                    assets: projectPayload.assets || [],
-                    fileSystem: fs,
-                    commits: projectPayload.logs?.map((l: any) => ({
-                        agent: l.actor || 'Trem-AI',
-                        message: l.message,
-                        timestamp: l.created_at * 1000
-                    })) || [],
-                    status: projectPayload.activeJob?.status || 'idle',
-                    created: projectPayload.project.created_at ? (projectPayload.project.created_at * 1000) : Date.now()
-                };
-                setRepoData(transformedRepo);
+                setRepoData(buildBackendRepoData(projectPayload));
             } catch (e) {
                 console.error("Failed to sync backend project payload", e);
             }

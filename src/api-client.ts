@@ -45,6 +45,20 @@ export const apiClient = {
     return `${API_BASE}/api/projects/${projectId}/artifacts/${artifactName}`;
   },
 
+  getArtifactContentUrl(projectId: string, artifactName: string) {
+    return `${API_BASE}/api/projects/${projectId}/artifact?name=${encodeURIComponent(artifactName)}`;
+  },
+
+  getAssetContentUrl(assetId: string) {
+    return `${API_BASE}/api/assets/${assetId}/content`;
+  },
+
+  async getArtifactText(projectId: string, artifactName: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/artifact?name=${encodeURIComponent(artifactName)}`);
+    if (!res.ok) throw new Error('Failed to fetch artifact content');
+    return res.text();
+  },
+
   async createProject(name: string, brief?: string) {
     const res = await fetch(`${API_BASE}/api/projects`, {
       method: 'POST',
