@@ -5,11 +5,12 @@ interface CommitDetailsViewProps {
         id: string;
         message: string;
         hashtags?: string[];
-        author: string;
+        author?: string;
         timestamp: string | number;
         parent?: string | null;
         branch?: string;
         artifacts?: Record<string, any>;
+        state?: Record<string, any>;
     };
     repoName?: string;
     onClose: () => void;
@@ -38,7 +39,8 @@ const CommitDetailsView: React.FC<CommitDetailsViewProps> = ({ commit, repoName,
         return `${Math.floor(diff / 86400)}d ago`;
     };
 
-    const artifactFiles = commit.artifacts ? Object.entries(commit.artifacts).flatMap(([key, value]) => {
+    const changedFiles = commit.artifacts || commit.state;
+    const artifactFiles = changedFiles ? Object.entries(changedFiles).flatMap(([key, value]) => {
         if (Array.isArray(value)) {
             return value.map((file: string) => ({ name: file, type: key }));
         }
@@ -86,7 +88,7 @@ const CommitDetailsView: React.FC<CommitDetailsViewProps> = ({ commit, repoName,
                                 <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
                                     <span className="flex items-center gap-1">
                                         <span className="material-icons-outlined text-xs">person</span>
-                                        {commit.author}
+                                        {commit.author || 'Trem-AI'}
                                     </span>
                                     <span className="flex items-center gap-1">
                                         <span className="material-icons-outlined text-xs">schedule</span>
@@ -143,15 +145,15 @@ const CommitDetailsView: React.FC<CommitDetailsViewProps> = ({ commit, repoName,
                             </div>
                             <div className="divide-y divide-slate-200 dark:divide-white/5">
                                 {artifactFiles.map((file, idx) => {
-                                    const icon = file.type === 'otio' ? 'videocam' :
+                                    const icon = file.type === 'timeline' || file.type === 'otio' ? 'videocam' :
                                         file.type === 'dag' ? 'account_tree' :
                                             file.type === 'scenes' ? 'movie' :
-                                                file.type === 'subtitles' ? 'subtitles' :
+                                                file.type === 'captions' || file.type === 'subtitles' ? 'subtitles' :
                                                     'description';
-                                    const color = file.type === 'otio' ? 'text-blue-400' :
+                                    const color = file.type === 'timeline' || file.type === 'otio' ? 'text-blue-400' :
                                         file.type === 'dag' ? 'text-primary' :
                                             file.type === 'scenes' ? 'text-emerald-400' :
-                                                file.type === 'subtitles' ? 'text-yellow-400' :
+                                                file.type === 'captions' || file.type === 'subtitles' ? 'text-yellow-400' :
                                                     'text-slate-400';
 
                                     return (

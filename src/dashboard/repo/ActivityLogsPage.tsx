@@ -16,6 +16,7 @@ interface CommitEntry {
     parent?: string | null;
     branch?: string;
     artifacts?: Record<string, any>;
+    state?: Record<string, any>;
 }
 
 const ActivityLogsView: React.FC<ActivityLogsViewProps> = (props) => {
@@ -89,7 +90,15 @@ const ActivityLogsView: React.FC<ActivityLogsViewProps> = (props) => {
                 const extracted: CommitEntry[] = commitsFolder.children
                     .map((f: any) => {
                         if (f.type === 'file' && f.content) {
-                            try { return JSON.parse(f.content); } catch { return null; }
+                            try {
+                                const parsed = JSON.parse(f.content);
+                                return {
+                                    ...parsed,
+                                    author: parsed.author || 'Trem-AI',
+                                };
+                            } catch {
+                                return null;
+                            }
                         }
                         return null;
                     })
@@ -269,32 +278,32 @@ const ActivityLogsView: React.FC<ActivityLogsViewProps> = (props) => {
                                                     </div>
 
                                                     {/* Changed Files Footer (Collapsible-ish feel) */}
-                                                    {commit.artifacts && Object.keys(commit.artifacts).length > 0 && (
+                                                    {(commit.artifacts || commit.state) && Object.keys(commit.artifacts || commit.state || {}).length > 0 && (
                                                         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-white/5 flex items-center gap-4">
                                                             <div className="flex -space-x-2">
-                                                                {Object.keys(commit.artifacts).slice(0, 4).map((type, i) => (
+                                                                {Object.keys(commit.artifacts || commit.state || {}).slice(0, 4).map((type, i) => (
                                                                     <div
                                                                         key={i}
                                                                         className="w-6 h-6 rounded-full bg-slate-100 dark:bg-zinc-800 border border-white dark:border-zinc-700 flex items-center justify-center relative z-[1]"
                                                                         title={type}
                                                                     >
-                                                                        <span className={`material-icons-outlined text-[10px] ${type === 'otio' ? 'text-primary' :
+                                                                        <span className={`material-icons-outlined text-[10px] ${type === 'timeline' || type === 'otio' ? 'text-primary' :
                                                                             type === 'dag' ? 'text-emerald-500' :
                                                                                 type === 'scenes' ? 'text-emerald-400' :
                                                                                     'text-slate-400'
                                                                             }`}>
-                                                                            {type === 'otio' ? 'videocam' : type === 'dag' ? 'account_tree' : type === 'scenes' ? 'movie' : 'description'}
+                                                                            {type === 'timeline' || type === 'otio' ? 'videocam' : type === 'dag' ? 'account_tree' : type === 'scenes' ? 'movie' : 'description'}
                                                                         </span>
                                                                     </div>
                                                                 ))}
-                                                                {Object.keys(commit.artifacts).length > 4 && (
+                                                                {Object.keys(commit.artifacts || commit.state || {}).length > 4 && (
                                                                     <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-zinc-800 border border-white dark:border-zinc-700 flex items-center justify-center text-[8px] font-bold text-slate-500 z-[5]">
-                                                                        +{Object.keys(commit.artifacts).length - 4}
+                                                                        +{Object.keys(commit.artifacts || commit.state || {}).length - 4}
                                                                     </div>
                                                                 )}
                                                             </div>
                                                             <span className="text-xs text-slate-400">
-                                                                {Object.values(commit.artifacts).flat().length} files changed
+                                                                {Object.values(commit.artifacts || commit.state || {}).flat().length} files changed
                                                             </span>
                                                         </div>
                                                     )}

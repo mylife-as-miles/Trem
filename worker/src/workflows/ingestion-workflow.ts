@@ -123,22 +123,6 @@ const normalizeHashtags = (hashtags: unknown) => {
     : ['#trem', '#ai-generated'];
 };
 
-const buildCommitArtifacts = (hasCaptions: boolean) => {
-  const artifacts: Record<string, string | string[]> = {
-    repo: 'repo.json',
-    scenes: 'scenes/scenes.json',
-    timeline: 'timeline/base.otio.json',
-    metadata: ['metadata/video.md', 'metadata/scenes.md'],
-    dag: 'dag/ingest.json',
-  };
-
-  if (hasCaptions) {
-    artifacts.subtitles = 'captions/captions.srt';
-  }
-
-  return artifacts;
-};
-
 const buildCommitState = (hasCaptions: boolean) => ({
   repo: 'repo.json',
   timeline: 'timeline/base.otio.json',

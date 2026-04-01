@@ -5,7 +5,6 @@ import { useUpdateRepo } from '../../hooks/useQueries';
 import AlertDialog from '../../components/ui/AlertDialog';
 // import { analyzeAsset, generateRepoStructure } from '../../services/gemini/repo/index';
 // import { transcribeAudio } from '../../services/whisperService';
-import { apiClient } from '../../api-client';
 
 interface RepoFilesViewProps {
     onNavigate: (view: 'dashboard' | 'repo' | 'timeline' | 'diff' | 'assets' | 'settings' | 'create-repo' | 'repo-files') => void;
@@ -279,6 +278,14 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                         return;
                     }
 
+                    if (!TEXT_FILE_PATTERN.test(selectedFile.name) && !(selectedFile.mimeType || '').startsWith('text/') && selectedFile.mimeType !== 'application/json') {
+                        if (isMounted) {
+                            setEditorContent(`Preview is not available for ${selectedFile.name}.`);
+                            setIsLoadingContent(false);
+                        }
+                        return;
+                    }
+
                     const response = await fetch(selectedFile.contentUrl);
                     if (!response.ok) {
                         throw new Error(`Failed to load ${selectedFile.name}`);
@@ -413,14 +420,14 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                 <div className="flex items-center gap-3">
                     {/* New Actions Group */}
                     <div className="flex items-center bg-slate-100 dark:bg-white/5 rounded-lg p-0.5 border border-slate-200 dark:border-white/5">
-                        <button onClick={() => fileInputRef.current?.click()} className="p-1.5 hover:bg-white dark:hover:bg-white/10 rounded-md transition-all text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white relative group" title="Upload Media">
+                        <button onClick={() => fileInputRef.current?.click()} disabled={isBackendRepo} className="p-1.5 hover:bg-white dark:hover:bg-white/10 rounded-md transition-all text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white relative group disabled:opacity-30 disabled:cursor-not-allowed" title={isBackendRepo ? "Cloudflare repo files are read-only" : "Upload Media"}>
                             <span className="material-icons-outlined text-lg">cloud_upload</span>
                         </button>
                         <div className="w-px h-4 bg-slate-200 dark:bg-white/10 mx-1"></div>
-                        <button onClick={() => setNewFolderDialogOpen(true)} className="p-1.5 hover:bg-white dark:hover:bg-white/10 rounded-md transition-all text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white" title="New Folder">
+                        <button onClick={() => setNewFolderDialogOpen(true)} disabled={isBackendRepo} className="p-1.5 hover:bg-white dark:hover:bg-white/10 rounded-md transition-all text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" title={isBackendRepo ? "Cloudflare repo files are read-only" : "New Folder"}>
                             <span className="material-icons-outlined text-lg">create_new_folder</span>
                         </button>
-                        <button onClick={() => { setNewFileDialogOpen(true); }} className="p-1.5 hover:bg-white dark:hover:bg-white/10 rounded-md transition-all text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white" title="New File">
+                        <button onClick={() => { setNewFileDialogOpen(true); }} disabled={isBackendRepo} className="p-1.5 hover:bg-white dark:hover:bg-white/10 rounded-md transition-all text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" title={isBackendRepo ? "Cloudflare repo files are read-only" : "New File"}>
                             <span className="material-icons-outlined text-lg">note_add</span>
                         </button>
                     </div>
@@ -429,7 +436,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
 
                     <button
                         onClick={handleDeleteClick}
-                        disabled={!selectedFile}
+                        disabled={!selectedFile || isBackendRepo}
                         className="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-500/20 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-300 dark:hover:border-red-500/40 disabled:opacity-30 disabled:hover:bg-transparent transition-all text-xs font-medium flex items-center gap-2"
                     >
                         <span className="material-icons-outlined text-sm">delete</span>
@@ -437,7 +444,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                     </button>
                     <button
                         onClick={handleSave}
-                        disabled={!isDirty}
+                        disabled={!isDirty || isBackendRepo || !!selectedFile?.readonly}
                         className="px-4 py-1.5 rounded-lg bg-primary hover:bg-primary_hover text-black font-bold tracking-wide flex items-center gap-2 disabled:opacity-50 disabled:grayscale transition-all text-xs"
                     >
                         <span className="material-icons-outlined text-sm">save</span>
@@ -456,7 +463,13 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                     </div>
 
                     <div className="flex-1 -mx-2">
-                        {renderTree(files)}
+                        {files.length > 0 ? (
+                            renderTree(files)
+                        ) : (
+                            <div className="px-4 py-6 text-xs font-mono text-slate-400 dark:text-zinc-600">
+                                No repository files generated yet.
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -469,7 +482,12 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                                     <span className="material-icons-outlined text-sm text-slate-400 dark:text-zinc-500">description</span>
                                     {selectedFile.name}
                                 </span>
-                                <span className="text-[10px] uppercase font-mono text-slate-400 dark:text-zinc-600">{selectedFile.id}</span>
+                                <div className="flex items-center gap-3">
+                                    {isLoadingContent && (
+                                        <span className="text-[10px] uppercase font-mono text-primary">Loading...</span>
+                                    )}
+                                    <span className="text-[10px] uppercase font-mono text-slate-400 dark:text-zinc-600">{selectedFile.path || selectedFile.id}</span>
+                                </div>
                             </div>
 
                             <div className="flex-1 overflow-hidden relative flex flex-col bg-white dark:bg-background-dark">
@@ -489,9 +507,14 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                                 ) : (
                                     <textarea
                                         value={editorContent}
-                                        onChange={(e) => { setEditorContent(e.target.value); setIsDirty(true); }}
+                                        onChange={(e) => {
+                                            if (isBackendRepo || selectedFile.readonly) return;
+                                            setEditorContent(e.target.value);
+                                            setIsDirty(true);
+                                        }}
                                         className="w-full h-full p-6 bg-transparent outline-none font-mono text-sm resize-none text-slate-800 dark:text-zinc-300 leading-relaxed custom-scrollbar"
                                         spellCheck={false}
+                                        readOnly={isBackendRepo || !!selectedFile.readonly}
                                     />
                                 )}
                             </div>

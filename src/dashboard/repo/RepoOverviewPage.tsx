@@ -79,7 +79,7 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
             .filter((node: FileNode) => node.type === 'folder')
             .map((node: FileNode) => node.id)
         ));
-        setSelectedId((prev) => prev || repoData.fileSystem[0]?.id || '');
+        setSelectedId(repoData.fileSystem[0]?.id || '');
 
         // If repoData has commits property (from backend payload), use it directly
         if (repoData.commits && repoData.commits.length > 0) {

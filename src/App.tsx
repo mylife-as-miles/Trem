@@ -119,10 +119,8 @@ const buildBackendFileSystem = (projectPayload: any) => {
         });
     });
 
-    const commitPathSet = new Set<string>();
     (projectPayload.commits || []).forEach((commit: any) => {
         const commitPath = `commits/${commit.id}.json`;
-        commitPathSet.add(commitPath);
         const visuals = artifactIconForName(commitPath);
         insertFileNode(fileTree, commitPath, {
             id: `commit:${commit.id}`,
@@ -139,7 +137,6 @@ const buildBackendFileSystem = (projectPayload: any) => {
         if (!artifactName) return;
 
         if (isCommitArtifact(artifactName)) {
-            commitPathSet.add(artifactName);
             if (!(projectPayload.commits || []).some((commit: any) => `commits/${commit.id}.json` === artifactName)) {
                 const visuals = artifactIconForName(artifactName);
                 insertFileNode(fileTree, artifactName, {
@@ -158,6 +155,7 @@ const buildBackendFileSystem = (projectPayload: any) => {
             id: `artifact:${artifactName}`,
             readonly: true,
             size: artifact.size,
+            mimeType: artifact.content_type,
             contentUrl: apiClient.getArtifactContentUrl(projectId, artifactName),
             icon: visuals.icon,
             iconColor: visuals.iconColor,

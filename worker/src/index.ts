@@ -390,7 +390,7 @@ app.get('/api/projects/:id/payload', async (c) => {
   const assets = await c.env.DB.prepare("SELECT * FROM assets WHERE project_id = ?").bind(id).all();
   const jobs = await c.env.DB.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").bind(id).all();
   const logs = await c.env.DB.prepare("SELECT * FROM event_logs WHERE project_id = ? ORDER BY created_at ASC").bind(id).all();
-  const artifacts = await c.env.DB.prepare("SELECT name, size FROM artifacts WHERE project_id = ?").bind(id).all();
+  const artifacts = await c.env.DB.prepare("SELECT name, size, content_type FROM artifacts WHERE project_id = ?").bind(id).all();
   const commits = await getProjectCommits(c.env, id);
 
   // Get live status from DO
