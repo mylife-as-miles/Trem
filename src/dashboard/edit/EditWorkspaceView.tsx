@@ -4,7 +4,7 @@ import { interpretAgentCommand } from '../../services/gemini/edit/index';
 import { RepoData } from '../../utils/db';
 import AssetLibrary from '../assets/AssetLibraryPage';
 import { useTremStore } from '../../store/useTremStore';
-import { useProjects, useRepos } from '../../hooks/useQueries';
+import { useProjectPayload, useProjects, useRepo, useRepos } from '../../hooks/useQueries';
 
 interface EditWorkspaceViewProps {
     onNavigate: (view: any) => void; // Using any for compatibility with common types
@@ -43,6 +43,26 @@ const toWorkspaceRepo = (repo: any): RepoData => ({
             : Date.now(),
 });
 
+const toWorkspaceRepoFromPayload = (payload: any): RepoData => ({
+    id: payload?.project?.id,
+    name: payload?.project?.name || 'Untitled Repo',
+    brief: payload?.project?.brief || '',
+    assets: Array.isArray(payload?.assets) ? payload.assets : [],
+    fileSystem: Array.isArray(payload?.fileSystem) ? payload.fileSystem : [],
+    commits: Array.isArray(payload?.currentBranchCommits)
+        ? payload.currentBranchCommits
+        : Array.isArray(payload?.commits)
+            ? payload.commits
+            : [],
+    branches: Array.isArray(payload?.branches) ? payload.branches : [],
+    branchHeads: payload?.branchHeads || {},
+    activeBranch: payload?.activeBranch,
+    selectedBranch: payload?.selectedBranch,
+    created: typeof payload?.project?.created_at === 'number'
+        ? payload.project.created_at * 1000
+        : Date.now(),
+});
+
 const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSelectRepo, onBack, initialRepo, templateMode, onPlan }) => {
     const [prompt, setPrompt] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
@@ -53,6 +73,10 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
     const { data: legacyRepos = [], isLoading: isLoadingLegacyRepos } = useRepos();
     const { data: cfProjects = [], isLoading: isLoadingProjects } = useProjects();
     const [selectedRepoId, setSelectedRepoId] = useState<RepoData['id'] | undefined>(initialRepo?.id);
+    const selectedLegacyRepoId = typeof selectedRepoId === 'number' ? selectedRepoId : undefined;
+    const selectedBackendRepoId = typeof selectedRepoId === 'string' ? selectedRepoId : undefined;
+    const { data: selectedLegacyRepo, isLoading: isLoadingSelectedLegacyRepo } = useRepo(selectedLegacyRepoId);
+    const { data: selectedBackendPayload, isLoading: isLoadingSelectedBackendRepo } = useProjectPayload(selectedBackendRepoId);
     const [isRepoDropdownOpen, setIsRepoDropdownOpen] = useState(false);
     const [repoSearch, setRepoSearch] = useState("");
     const repoDropdownRef = useRef<HTMLDivElement>(null);
