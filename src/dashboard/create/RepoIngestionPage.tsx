@@ -92,6 +92,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     // Upload Progress
     const [uploadProgress, setUploadProgress] = useState(0);
     const [uploadStatus, setUploadStatus] = useState('');
+    const [isProcessingUpload, setIsProcessingUpload] = useState(false);
 
     // Active Project Tracking
     const [activeProjectId, setActiveProjectId] = useState<string | null>(initialProjectId || null);
@@ -121,7 +122,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
 
     // Background job state monitoring
     useEffect(() => {
-        if (projectPayload) {
+        if (projectPayload && !isProcessingUpload) {
             if (projectPayload.activeJob?.status === 'completed') {
                 setStep('completed');
             } else if (projectPayload.activeJob?.status === 'failed') {
@@ -130,7 +131,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                 setStep('ingest');
             }
         }
-    }, [projectPayload]);
+    }, [projectPayload, isProcessingUpload]);
 
     useEffect(() => {
         if (!activeProjectId || !isProjectPayloadFetched || projectPayload) {
@@ -186,6 +187,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     const handleCreateProject = async () => {
         if (!repoName || selectedFiles.length === 0) return;
 
+        setIsProcessingUpload(true);
         setStep('uploading');
         setUploadStatus('Initializing project...');
         setUploadProgress(0);
@@ -213,11 +215,13 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             await startIngestionMutation.mutateAsync(project.id);
             
             // Move to monitoring
+            setIsProcessingUpload(false);
             setStep('ingest');
 
         } catch (error) {
             console.error("Failed to create project", error);
             setUploadStatus(`Error: ${error instanceof Error ? error.message : 'Upload failed'}`);
+            setIsProcessingUpload(false);
         }
     };
 
