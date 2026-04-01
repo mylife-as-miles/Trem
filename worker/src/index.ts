@@ -31,6 +31,11 @@ type ExistingJob = {
   workflow_id: string | null;
 };
 
+type QueueAssetPreview = {
+  id: string;
+  name: string;
+};
+
 const app = new Hono<{ Bindings: Env }>();
 
 app.get('/api/diag/db', async (c) => {
@@ -67,6 +72,18 @@ app.use('*', cors());
 const ACTIVE_WORKFLOW_STATUSES = new Set<WorkflowInstanceStatus>(['queued', 'running', 'paused', 'waiting']);
 const ACTIVE_COORDINATOR_STATUSES = new Set(['queued', 'running', 'transcribing', 'analyzing']);
 
+const createQueuedAgentStates = (assets: QueueAssetPreview[]) =>
+  Array.from({ length: 4 }, (_, index) => {
+    const asset = assets[index];
+    return {
+      slot: index + 1,
+      status: asset ? 'queued' : 'idle',
+      assetId: asset?.id ?? null,
+      assetName: asset?.name ?? null,
+      completedCount: 0,
+    };
+  });
+
 const getCoordinatorStub = (env: Env, projectId: string) => {
   const doId = env.PROJECT_COORDINATOR.idFromName(projectId);
   return env.PROJECT_COORDINATOR.get(doId);
@@ -77,12 +94,13 @@ const resetCoordinator = async (
   projectId: string,
   jobStatus: string = 'idle',
   progress: number = 0,
+  message: string = 'Waiting for a Trem workflow.',
 ) => {
   const stub = getCoordinatorStub(env, projectId);
   await stub.fetch(
     new Request('http://do/reset', {
       method: 'POST',
-      body: JSON.stringify({ jobStatus, progress }),
+      body: JSON.stringify({ jobStatus, progress, message }),
     }),
   );
 };
@@ -94,6 +112,7 @@ const getCoordinatorStatus = async (env: Env, projectId: string) => {
     activeJobId: string | null;
     progress: number;
     jobStatus: string;
+    message: string;
     agents?: unknown[];
   };
 };
@@ -142,7 +161,7 @@ const recoverStaleJobIfNeeded = async (env: Env, projectId: string, job: Existin
     await env.DB.prepare(
       "UPDATE projects SET status = 'ready', updated_at = ? WHERE id = ?"
     ).bind(now, projectId).run();
-    await resetCoordinator(env, projectId, 'completed', 100);
+    await resetCoordinator(env, projectId, 'completed', 100, 'Workflow completed. Refreshing repository state.');
 
     return {
       recovered: false,
@@ -167,7 +186,7 @@ const recoverStaleJobIfNeeded = async (env: Env, projectId: string, job: Existin
   await env.DB.prepare(
     "UPDATE projects SET status = 'idle', updated_at = ? WHERE id = ?"
   ).bind(now, projectId).run();
-  await resetCoordinator(env, projectId, 'idle', 0);
+  await resetCoordinator(env, projectId, 'idle', 0, 'Recovered a stale workflow. Ready for a new ingest run.');
 
   return {
     recovered: true,
@@ -181,10 +200,11 @@ const recoverStaleJobIfNeeded = async (env: Env, projectId: string, job: Existin
 app.post('/api/projects', async (c) => {
   const { name, brief } = await c.req.json();
   const id = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
 
   await c.env.DB.prepare(
-    "INSERT INTO projects (id, name, brief) VALUES (?, ?, ?)"
-  ).bind(id, name, brief || '').run();
+    "INSERT INTO projects (id, name, brief, updated_at) VALUES (?, ?, ?, ?)"
+  ).bind(id, name, brief || '', now).run();
 
   const project = await c.env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first();
   return c.json(project);
@@ -268,6 +288,7 @@ app.get('/api/projects/:id', async (c) => {
     logs: logs.results,
     liveProgress: doStatus.progress,
     liveStatus: doStatus.jobStatus,
+    liveMessage: doStatus.message,
     liveAgents: doStatus.agents || []
   });
 });
@@ -294,6 +315,7 @@ app.get('/api/projects/:id/payload', async (c) => {
     logs: logs.results,
     liveProgress: doStatus.progress,
     liveStatus: doStatus.jobStatus,
+    liveMessage: doStatus.message,
     liveAgents: doStatus.agents || []
   });
 });
@@ -375,6 +397,15 @@ app.get('/api/projects/:projectId/artifacts/:name', async (c) => {
 
 app.post('/api/projects/:projectId/ingest', async (c) => {
   const projectId = c.req.param('projectId');
+  const now = Math.floor(Date.now() / 1000);
+
+  const assets = await c.env.DB.prepare(
+    "SELECT id, name FROM assets WHERE project_id = ? ORDER BY created_at ASC"
+  ).bind(projectId).all<QueueAssetPreview>();
+
+  if (!assets.results.length) {
+    return c.json({ error: 'No uploaded assets found for this project.' }, 400);
+  }
 
   // Check D1 for any active or queued jobs for this project
   const existingJob = await c.env.DB.prepare(
@@ -389,12 +420,20 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
   }
 
   const jobId = crypto.randomUUID();
+  const queuedAgents = createQueuedAgentStates(assets.results);
+  const initialQueueMessage = assets.results.length === 1
+    ? `Cloudflare queued ${assets.results[0].name} for Trem analysis.`
+    : `Cloudflare queued ${assets.results.length} source files for the Trem agent pool.`;
 
   // Try to lock the project via DO
   const stub = getCoordinatorStub(c.env, projectId);
   const lockRes = await stub.fetch(new Request('http://do/lock', {
     method: 'POST',
-    body: JSON.stringify({ jobId })
+    body: JSON.stringify({
+      jobId,
+      message: initialQueueMessage,
+      agents: queuedAgents,
+    })
   }));
 
   if (!lockRes.ok) {
@@ -406,6 +445,22 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
     "INSERT INTO jobs (id, project_id, status) VALUES (?, ?, 'queued')"
   ).bind(jobId, projectId).run();
 
+  await c.env.DB.prepare(
+    "UPDATE projects SET status = 'queued', updated_at = ? WHERE id = ?"
+  ).bind(now, projectId).run();
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
+    ).bind(crypto.randomUUID(), projectId, jobId, 'Backend accepted the ingest request.'),
+    c.env.DB.prepare(
+      "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
+    ).bind(crypto.randomUUID(), projectId, jobId, initialQueueMessage),
+    c.env.DB.prepare(
+      "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
+    ).bind(crypto.randomUUID(), projectId, jobId, 'Polling Cloudflare workflow steps every second until the first worker update lands.'),
+  ]);
+
   // Start Workflow
   const instance = await c.env.INGESTION_WORKFLOW.create({
     params: { projectId, jobId }
@@ -414,6 +469,25 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
   await c.env.DB.prepare(
     "UPDATE jobs SET workflow_id = ? WHERE id = ?"
   ).bind(instance.id, jobId).run();
+
+  await stub.fetch(new Request('http://do/progress', {
+    method: 'POST',
+    body: JSON.stringify({
+      progress: 1,
+      jobStatus: 'queued',
+      message: `Cloudflare workflow ${instance.id.slice(0, 8)} is live and waiting for the first step.`,
+      agents: queuedAgents,
+    }),
+  }));
+
+  await c.env.DB.prepare(
+    "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
+  ).bind(
+    crypto.randomUUID(),
+    projectId,
+    jobId,
+    `Cloudflare workflow instance ${instance.id.slice(0, 8)} created successfully.`
+  ).run();
 
   return c.json({ jobId, workflowId: instance.id });
 });

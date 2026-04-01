@@ -95,10 +95,16 @@ export const useProjectPayload = (id: string | undefined) => {
             return await apiClient.getProjectPayload(id);
         },
         enabled: !!id,
-        refetchInterval: (data: any) => {
-            // Refetch every 2s if there's an active job running
-            if (data?.activeJob && ['queued', 'running', 'transcribing', 'analyzing', 'synthesizing', 'generating_artifacts'].includes(data.activeJob.status)) {
-                return 2000;
+        refetchIntervalInBackground: true,
+        refetchOnReconnect: true,
+        refetchOnMount: 'always',
+        refetchInterval: (query: any) => {
+            const data = query?.state?.data;
+            const liveStatus = data?.liveStatus;
+            const activeStatus = data?.activeJob?.status;
+            const isActive = ['queued', 'running', 'transcribing', 'analyzing', 'synthesizing', 'generating_artifacts'].includes(liveStatus || activeStatus);
+            if (isActive) {
+                return 1000;
             }
             return false;
         }

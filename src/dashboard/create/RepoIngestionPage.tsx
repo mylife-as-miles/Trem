@@ -96,6 +96,10 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
 
     // Active Project Tracking
     const [activeProjectId, setActiveProjectId] = useState<string | null>(initialProjectId || null);
+    const [activeRunMeta, setActiveRunMeta] = useState<{ jobId: string | null; workflowId: string | null }>({
+        jobId: null,
+        workflowId: null,
+    });
     
     // Mutations
     const createProjectMutation = useCreateCFProject();
@@ -117,6 +121,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             setSelectedFiles([]);
             setUploadProgress(0);
             setActiveProjectId(null);
+            setActiveRunMeta({ jobId: null, workflowId: null });
         }
     }, [initialProjectId]);
 
@@ -212,7 +217,11 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
 
             // 3. Start Ingestion
             setUploadStatus('Starting Cloudflare Workflow...');
-            await startIngestionMutation.mutateAsync(project.id);
+            const runMeta = await startIngestionMutation.mutateAsync(project.id);
+            setActiveRunMeta({
+                jobId: runMeta.jobId || null,
+                workflowId: runMeta.workflowId || null,
+            });
             
             // Move to monitoring
             setIsProcessingUpload(false);
@@ -249,8 +258,10 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     const workflowStatus = projectPayload?.liveStatus || projectPayload?.activeJob?.status || '';
     const workflowHasStarted = ['queued', 'running', 'transcribing', 'analyzing', 'generating_artifacts', 'completed'].includes(String(workflowStatus));
     const inferredActiveAsset = projectPayload?.assets?.find((asset: any) =>
-        ['processing', 'transcribing', 'analyzing'].includes(String(asset.status || ''))
+        ['processing', 'transcribing', 'analyzing', 'uploaded'].includes(String(asset.status || ''))
     );
+    const activeWorkflowId = projectPayload?.activeJob?.workflow_id || activeRunMeta.workflowId;
+    const activeJobId = projectPayload?.activeJob?.id || activeRunMeta.jobId;
     const rawLiveAgentPool = Array.from({ length: 4 }, (_, index) => {
         const liveAgent = projectPayload?.liveAgents?.find((agent: any) => agent.slot === index + 1);
         if (liveAgent) {
@@ -270,7 +281,7 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
             if (index === 0 && inferredActiveAsset) {
                 return {
                     ...agent,
-                    status: inferredActiveAsset.status === 'processing' ? 'queued' : inferredActiveAsset.status,
+                    status: ['uploaded', 'processing'].includes(String(inferredActiveAsset.status)) ? 'queued' : inferredActiveAsset.status,
                     assetName: inferredActiveAsset.name,
                 };
             }
@@ -284,12 +295,26 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     const currentProgress = step === 'uploading'
         ? uploadProgress
         : (projectPayload?.liveProgress || projectPayload?.activeJob?.progress || 0);
+    const derivedLiveMessage = projectPayload?.liveMessage
+        || (workflowStatus === 'queued'
+            ? 'Cloudflare has accepted the workflow and Trem is waiting for the first worker step.'
+            : workflowStatus === 'transcribing'
+                ? 'Trem is transcribing audio before scene and metadata analysis.'
+                : workflowStatus === 'analyzing'
+                    ? 'Trem is tagging the source media and preparing semantic metadata.'
+                    : workflowStatus === 'synthesizing'
+                        ? 'Trem is applying the repository system prompt and generating the structured repo output.'
+                        : workflowStatus === 'generating_artifacts'
+                            ? 'Cloudflare is writing OTIO, metadata, captions, commits, and repo artifacts back to storage.'
+                            : workflowStatus === 'completed'
+                                ? 'Repository artifacts are ready.'
+                                : uploadStatus || 'Waiting for the first workflow event.');
     const currentWorkflowLabel = step === 'details'
         ? 'Ready to stage'
         : step === 'uploading'
             ? 'Uploading media'
             : step === 'ingest'
-                ? (projectPayload?.activeJob?.status || 'processing')
+                ? (projectPayload?.liveStatus || projectPayload?.activeJob?.status || 'processing')
                 : 'Commit ready';
     const journeySteps = [
         {
@@ -316,10 +341,21 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     ];
     
     // Construct simulation logs from actual DB logs
-    const simLogs = projectPayload?.logs?.map((l: any) => `[${new Date(l.created_at || Date.now()).toLocaleTimeString()}] ${l.message}`) || [];
-    if (uploadStatus && step === 'uploading') {
-        simLogs.push(`> ${uploadStatus}`);
+    const projectLogs = projectPayload?.logs?.map((l: any) => `[${new Date((l.created_at || Date.now()) * 1000).toLocaleTimeString()}] ${l.message}`) || [];
+    const statusLines: string[] = [];
+    if (step === 'uploading' && uploadStatus) {
+        statusLines.push(`> ${uploadStatus}`);
     }
+    if (step === 'ingest' && activeJobId) {
+        statusLines.push(`> Backend polling /payload every 1s for job ${activeJobId.slice(0, 8)}.`);
+    }
+    if (step === 'ingest' && activeWorkflowId) {
+        statusLines.push(`> Cloudflare workflow ${activeWorkflowId.slice(0, 8)} is active.`);
+    }
+    if (step === 'ingest' && derivedLiveMessage) {
+        statusLines.push(`> ${derivedLiveMessage}`);
+    }
+    const simLogs = [...statusLines, ...projectLogs];
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-slate-50 text-slate-900 selection:bg-primary selection:text-black dark:bg-background-dark dark:text-white">
@@ -590,6 +626,27 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                                             <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Project</div>
                                             <div className="mt-2 truncate text-sm font-medium text-slate-900 dark:text-white">
                                                 {projectPayload?.project?.name || repoName || 'Initializing repository'}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Backend Poll</div>
+                                            <div className="mt-2 text-sm font-medium text-slate-900 dark:text-white">
+                                                {step === 'ingest' ? 'Every 1 second while active' : 'Idle'}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Cloudflare Workflow</div>
+                                            <div className="mt-2 truncate text-sm font-medium text-slate-900 dark:text-white">
+                                                {activeWorkflowId ? activeWorkflowId.slice(0, 12) : 'Pending assignment'}
+                                            </div>
+                                        </div>
+                                        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-border-dark dark:bg-surface-card">
+                                            <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Current Action</div>
+                                            <div className="mt-2 text-sm leading-6 text-slate-900 dark:text-white">
+                                                {derivedLiveMessage}
                                             </div>
                                         </div>
                                     </div>

@@ -252,6 +252,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
                 "UPDATE assets SET status = 'analyzing' WHERE id = ?"
               ).bind(asset.id).run();
 
+              await insertEventLog(`Agent ${agent.slot} applying Trem asset-tagging prompt to ${asset.name}`);
               const analysis = this.env.GEMINI_API_KEY
                 ? await analyzeAssetWithGemini({
                     apiKey: this.env.GEMINI_API_KEY,
@@ -383,6 +384,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
           };
         }
 
+        await insertEventLog('Applying the Trem repository system prompt to generate scenes, captions, metadata, OTIO, DAG, commits, and repo output.');
         const repoStructure = await generateRepoWithGemini(
           this.env.GEMINI_API_KEY,
           {
