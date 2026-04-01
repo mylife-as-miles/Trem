@@ -22,13 +22,24 @@ interface FileNode {
     locked?: boolean;
     icon?: string;
     iconColor?: string;
+    path?: string;
+    contentUrl?: string;
+    readonly?: boolean;
+    mimeType?: string;
 }
 
+const VIDEO_FILE_PATTERN = /\.(mp4|mov|webm)$/i;
+const IMAGE_FILE_PATTERN = /\.(jpg|jpeg|png|gif|webp)$/i;
+const AUDIO_FILE_PATTERN = /\.(mp3|wav|m4a|aac|ogg)$/i;
+const TEXT_FILE_PATTERN = /\.(json|md|srt|txt|ya?ml)$/i;
+
 const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) => {
+    const isBackendRepo = typeof repoData?.id === 'string';
     const [files, setFiles] = useState<FileNode[]>([]);
     const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
     const [editorContent, setEditorContent] = useState('');
     const [isDirty, setIsDirty] = useState(false);
+    const [isLoadingContent, setIsLoadingContent] = useState(false);
 
     // CRUD Dialog States
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -58,8 +69,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                 console.error("Failed to parse fileSystem", e);
             }
         } else {
-            // Fallback init
-            setFiles([{ id: 'root', name: 'root', type: 'folder', children: [] }]);
+            setFiles([]);
         }
     }, [repoData]);
 
@@ -84,7 +94,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
 
     // Auto-Commit System
     const createCommit = async (message: string, updatedFS: FileNode[]) => {
-        if (!repoData?.id) return;
+        if (!repoData?.id || isBackendRepo) return;
 
         try {
             // 1. Generate new Commit ID
@@ -154,7 +164,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
     };
 
     const handleDelete = async () => {
-        if (!selectedFile) return;
+        if (!selectedFile || isBackendRepo) return;
 
         const deleteRecursive = (nodes: FileNode[], id: string): FileNode[] => {
             return nodes.filter(n => n.id !== id).map(n => ({
@@ -183,7 +193,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
     };
 
     const handleSave = () => {
-        if (selectedFile) {
+        if (selectedFile && !isBackendRepo && !selectedFile.readonly) {
             setFiles(files.map(n => n.id === selectedFile.id ? { ...n, content: editorContent } : n));
             setIsDirty(false);
             createCommit(`feat: updated ${selectedFile.name}`, files);
@@ -191,12 +201,13 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
     };
 
     const handleDeleteClick = () => {
-        if (selectedFile) {
+        if (selectedFile && !isBackendRepo) {
             setDeleteDialogOpen(true);
         }
     };
 
     const handleCreateItem = async (type: 'folder' | 'file') => {
+        if (isBackendRepo) return;
         // Default to root if no selection or selection is file
         // Or create inside selected folder
         let targetId = 'root'; // simplified, ideally we track 'current path'
@@ -241,34 +252,82 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
     useEffect(() => {
         if (!selectedFile) {
             setPreviewUrl(null);
+            setEditorContent('');
+            setIsLoadingContent(false);
             return;
         }
-        let url: string | null = null;
-        let isBlob = false;
+        let objectUrl: string | null = null;
+        let isMounted = true;
 
-        // Async fetch from DB
-        const fetchAsset = async () => {
-            // In new logic, ID matches exactly
+        const loadSelectedFile = async () => {
+            setPreviewUrl(null);
+            setIsLoadingContent(true);
+
+            if (selectedFile.content) {
+                setEditorContent(selectedFile.content);
+                setIsLoadingContent(false);
+                return;
+            }
+
+            if (selectedFile.contentUrl) {
+                try {
+                    if (VIDEO_FILE_PATTERN.test(selectedFile.name) || IMAGE_FILE_PATTERN.test(selectedFile.name) || AUDIO_FILE_PATTERN.test(selectedFile.name)) {
+                        if (isMounted) {
+                            setPreviewUrl(selectedFile.contentUrl);
+                            setIsLoadingContent(false);
+                        }
+                        return;
+                    }
+
+                    const response = await fetch(selectedFile.contentUrl);
+                    if (!response.ok) {
+                        throw new Error(`Failed to load ${selectedFile.name}`);
+                    }
+
+                    const text = await response.text();
+                    if (isMounted) {
+                        setEditorContent(text);
+                        setIsLoadingContent(false);
+                    }
+                    return;
+                } catch (error) {
+                    if (isMounted) {
+                        setEditorContent(`Unable to load ${selectedFile.name}.`);
+                        setIsLoadingContent(false);
+                    }
+                    return;
+                }
+            }
+
             const asset = await db.getAsset(selectedFile.id);
+            if (!isMounted) return;
+
             if (asset) {
                 if (asset.blob) {
-                    url = URL.createObjectURL(asset.blob);
-                    isBlob = true;
-                    setPreviewUrl(url);
+                    objectUrl = URL.createObjectURL(asset.blob);
+                    setPreviewUrl(objectUrl);
                 } else if (asset.url) {
                     setPreviewUrl(asset.url);
+                } else {
+                    setPreviewUrl(null);
                 }
             } else {
                 setPreviewUrl(null);
+                setEditorContent(selectedFile.content || '');
             }
+
+            setIsLoadingContent(false);
         };
-        fetchAsset();
+
+        loadSelectedFile();
 
         return () => {
-            // Cleanup logic tricky with async set, but React handles unmount updates usually
-            // Ideally we track the url in a ref to revoke
+            isMounted = false;
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+            }
         };
-    }, [selectedFile, repoData]); // Dependency on repoData is less relevant now we fetch DB directly
+    }, [selectedFile, repoData]);
 
 
     // --- Render ---

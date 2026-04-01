@@ -17,6 +17,9 @@ export interface FileNode {
   icon?: string;
   iconColor?: string;
   content?: string;
+  path?: string;
+  contentUrl?: string;
+  readonly?: boolean;
 }
 
 import { RepoData } from '../../utils/db';
@@ -30,56 +33,35 @@ interface VideoRepoOverviewProps {
   onNavigate?: (view: string) => void;
 }
 
-// --- Mock Data ---
-const defaultFileSystem: FileNode[] = [
-  {
-    id: 'media',
-    name: 'media',
-    type: 'folder',
-    locked: true,
-    children: [
-      { id: 'raw_footage', name: 'raw_footage', type: 'folder', children: [] },
-      { id: 'proxies', name: 'proxies', type: 'folder', children: [] },
-    ]
-  },
-  {
-    id: 'timelines',
-    name: 'timelines',
-    type: 'folder',
-    children: [
-      { id: 'main_cut_v2', name: 'Main_Cut_v2.xml', type: 'file', icon: 'movie_creation', iconColor: 'text-emerald-400' },
-      { id: 'social_vertical', name: 'Social_Vertical.xml', type: 'file', icon: 'movie_creation', iconColor: 'text-emerald-400' }
-    ]
-  },
-  {
-    id: 'exports',
-    name: 'exports',
-    type: 'folder',
-    children: [
-      { id: 'instagram_story', name: 'Instagram_Story_v1.mp4', type: 'file', icon: 'movie', iconColor: 'text-green-400' },
-      { id: 'broadcast_master', name: 'Broadcast_Master_ProRes.mov', type: 'file', icon: 'movie', iconColor: 'text-primary' }
-    ]
-  },
-  {
-    id: 'assets',
-    name: 'assets',
-    type: 'folder',
-    children: [
-      { id: 'fonts', name: 'fonts', type: 'folder', children: [] },
-      { id: 'logos', name: 'logos', type: 'folder', children: [] }
-    ]
-  }
-];
+const defaultFileSystem: FileNode[] = [];
 
 interface ActivityLogEntry {
+  id?: string;
   agent: string;
   message: string;
   timestamp: number;
+  hashtags?: string[];
+  parent?: string | null;
+  branch?: string;
+  artifacts?: Record<string, any>;
 }
 
+const findFileByPath = (nodes: FileNode[], path: string): FileNode | null => {
+  for (const node of nodes) {
+    if (node.type === 'file' && node.path === path) {
+      return node;
+    }
+    if (node.children) {
+      const found = findFileByPath(node.children, path);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
 const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavigate }) => {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['timelines', 'media']));
-  const [selectedId, setSelectedId] = useState<string>('timelines');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set(['media']));
+  const [selectedId, setSelectedId] = useState<string>('');
   const [fileSystem, setFileSystem] = useState<FileNode[]>(defaultFileSystem);
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
   const [selectedCommit, setSelectedCommit] = useState<any | null>(null);
@@ -90,8 +72,14 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
   // Update filesystem to match the Repo data - checks for existing structure first
   useEffect(() => {
     if (repoData) {
-      if (repoData.fileSystem) {
+      if (repoData.fileSystem && repoData.fileSystem.length > 0) {
         setFileSystem(repoData.fileSystem);
+        setExpandedIds(new Set(
+          repoData.fileSystem
+            .filter((node: FileNode) => node.type === 'folder')
+            .map((node: FileNode) => node.id)
+        ));
+        setSelectedId((prev) => prev || repoData.fileSystem[0]?.id || '');
 
         // If repoData has commits property (from backend payload), use it directly
         if (repoData.commits && repoData.commits.length > 0) {
@@ -123,35 +111,7 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
           }
         }
       } else {
-        // Fallback to legacy format if fileSystem is missing
-        const timelineFolderExists = defaultFileSystem.find(n => n.name === 'timelines');
-        if (!timelineFolderExists) {
-          const newFS = [
-            {
-              id: 'media',
-              name: 'media',
-              type: 'folder' as const,
-              locked: true,
-              children: [
-                {
-                  id: 'raw_footage',
-                  name: 'raw_footage',
-                  type: 'folder' as const,
-                  children: repoData.assets?.map((a: any) => ({
-                    id: a.id,
-                    name: a.name || `${a.id}.mp4`,
-                    type: 'file' as const,
-                    icon: 'movie',
-                    iconColor: 'text-primary'
-                  })) || []
-                },
-                { id: 'proxies', name: 'proxies', type: 'folder' as const, children: [] }
-              ]
-            },
-            ...defaultFileSystem.filter(n => n.name !== 'media')
-          ];
-          setFileSystem(newFS);
-        }
+        setFileSystem([]);
       }
     }
   }, [repoData]);
@@ -203,32 +163,9 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
     setShowDeleteDialog(false);
   };
 
-  const handleCommitClick = (activityEntry: ActivityLogEntry) => {
-    // Find the full commit data from the file system
-    if (repoData?.fileSystem) {
-      const commitsFolder = repoData.fileSystem.find((node: FileNode) => node.name === 'commits');
-      if (commitsFolder && commitsFolder.children) {
-        const commitFile = commitsFolder.children.find((file: FileNode) => {
-          if (file.type === 'file' && file.content) {
-            try {
-              const data = JSON.parse(file.content);
-              return data.timestamp === activityEntry.timestamp;
-            } catch (e) {
-              return false;
-            }
-          }
-          return false;
-        });
-
-        if (commitFile && commitFile.content) {
-          try {
-            const fullCommitData = JSON.parse(commitFile.content);
-            setSelectedCommit(fullCommitData);
-          } catch (e) {
-            console.error('Failed to parse commit data:', e);
-          }
-        }
-      }
+  const handleCommitClick = (commit: any) => {
+    if (commit) {
+      setSelectedCommit(commit);
     }
   };
 
@@ -361,39 +298,13 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
 
   const briefContent = React.useMemo(() => {
     if (!repoData?.fileSystem) return repoData?.brief;
-    const descriptions = repoData.fileSystem.find(n => n.name === 'descriptions');
-    const videoMd = descriptions?.children?.find(n => n.name === 'video.md');
+    const videoMd = findFileByPath(repoData.fileSystem, 'metadata/video.md');
     return videoMd?.content || repoData.brief;
   }, [repoData]);
 
   const latestTags = React.useMemo(() => {
-    if (!activityLog || activityLog.length === 0) return [];
-    // ActivityLog is already sorted by timestamp (desc)
-    // We need to find the commit that matches the latest activity
-    // But actually, we need the *latest commit object* which has hashtags, not just the activity log entry
-
-    if (repoData?.fileSystem) {
-      const commitsFolder = repoData.fileSystem.find((node: FileNode) => node.name === 'commits');
-      if (commitsFolder && commitsFolder.children) {
-        // Find the file corresponding to the latest activity (index 0)
-        // Or simpler: parse all commits, sort, take first. 
-        // Since activityLog is already derived from commitsFolder, we can just look up the file
-        // that corresponds to the top activity log entry.
-
-        // Simpler approach: Map all commits, sort by timestamp, take first valid one with hashtags
-        const allCommits = commitsFolder.children
-          .map((f: FileNode) => {
-            try { return f.content ? JSON.parse(f.content) : null; } catch { return null; }
-          })
-          .filter((c: any) => c !== null)
-          .sort((a: any, b: any) => (new Date(b.timestamp).getTime()) - (new Date(a.timestamp).getTime()));
-
-        if (allCommits.length > 0 && allCommits[0].hashtags) {
-          return allCommits[0].hashtags;
-        }
-      }
-    }
-    return [];
+    const latestCommit = repoData?.commits?.[0];
+    return Array.isArray(latestCommit?.hashtags) ? latestCommit.hashtags : [];
   }, [repoData, activityLog]);
 
   return (
@@ -551,19 +462,7 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
                       return (
                         <tr
                           key={idx}
-                          onClick={() => {
-                            // Find full commit data from fileSystem
-                            const commitsFolder = repoData?.fileSystem?.find((n: FileNode) => n.name === 'commits');
-                            const commitFile = commitsFolder?.children?.[idx];
-                            if (commitFile?.content) {
-                              try {
-                                const commitData = JSON.parse(commitFile.content);
-                                handleCommitClick(commitData);
-                              } catch (e) {
-                                console.error('Failed to parse commit', e);
-                              }
-                            }
-                          }}
+                          onClick={() => handleCommitClick(repoData?.commits?.[idx] || entry)}
                           className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group cursor-pointer"
                         >
                           <td className="px-6 py-4 flex items-center gap-3">
