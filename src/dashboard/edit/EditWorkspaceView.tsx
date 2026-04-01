@@ -4,7 +4,7 @@ import { interpretAgentCommand } from '../../services/gemini/edit/index';
 import { RepoData } from '../../utils/db';
 import AssetLibrary from '../assets/AssetLibraryPage';
 import { useTremStore } from '../../store/useTremStore';
-import { useRepos } from '../../hooks/useQueries';
+import { useProjects, useRepos } from '../../hooks/useQueries';
 
 interface EditWorkspaceViewProps {
     onNavigate: (view: any) => void; // Using any for compatibility with common types
@@ -29,6 +29,20 @@ const MSG_MODES = [
     { id: 'start', label: 'Start / Auto-Execute', icon: 'play_arrow', description: 'Immediately execute the command.' },
 ];
 
+const toWorkspaceRepo = (repo: any): RepoData => ({
+    id: repo.id,
+    name: repo.name,
+    brief: repo.brief || '',
+    assets: Array.isArray(repo.assets) ? repo.assets : [],
+    fileSystem: Array.isArray(repo.fileSystem) ? repo.fileSystem : [],
+    commits: Array.isArray(repo.commits) ? repo.commits : [],
+    created: typeof repo.created === 'number'
+        ? repo.created
+        : typeof repo.created_at === 'number'
+            ? repo.created_at * 1000
+            : Date.now(),
+});
+
 const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSelectRepo, onBack, initialRepo, templateMode, onPlan }) => {
     const [prompt, setPrompt] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
@@ -36,8 +50,9 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
 
     // Repo Selection State
     // Repo Selection State
-    const { data: repos = [], isLoading: isLoadingRepos } = useRepos();
-    const [selectedRepoId, setSelectedRepoId] = useState<number | undefined>(initialRepo?.id);
+    const { data: legacyRepos = [], isLoading: isLoadingLegacyRepos } = useRepos();
+    const { data: cfProjects = [], isLoading: isLoadingProjects } = useProjects();
+    const [selectedRepoId, setSelectedRepoId] = useState<RepoData['id'] | undefined>(initialRepo?.id);
     const [isRepoDropdownOpen, setIsRepoDropdownOpen] = useState(false);
     const [repoSearch, setRepoSearch] = useState("");
     const repoDropdownRef = useRef<HTMLDivElement>(null);
@@ -166,7 +181,12 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
         }
     }
 
-    const filteredRepos = repos.filter(repo =>
+    const allRepos = [
+        ...cfProjects.map((project: any) => toWorkspaceRepo(project)),
+        ...legacyRepos.map((repo) => toWorkspaceRepo(repo)),
+    ].filter((repo, index, array) => array.findIndex((entry) => String(entry.id) === String(repo.id)) === index);
+
+    const filteredRepos = allRepos.filter(repo =>
         repo.name.toLowerCase().includes(repoSearch.toLowerCase())
     );
 
@@ -177,7 +197,8 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
         fileSystem: [],
         created: Date.now(),
     };
-    const activeRepo = repos.find(r => r.id === selectedRepoId) || fallbackRepo;
+    const activeRepo = allRepos.find(r => String(r.id) === String(selectedRepoId)) || fallbackRepo;
+    const isLoadingRepos = isLoadingLegacyRepos || isLoadingProjects;
     const activeMode = MSG_MODES.find(m => m.id === selectedModeId) || MSG_MODES[0];
     const primaryActionLabel = selectedModeId === 'interactive' ? 'Plan Changes' : 'Execute Edit';
     const statusLabel = isProcessing ? 'Processing request' : (selectedModeId === 'interactive' ? 'Planning mode' : 'Auto-execute mode');
@@ -259,8 +280,8 @@ const EditWorkspaceView: React.FC<EditWorkspaceViewProps> = ({ onNavigate, onSel
                                         Keep the brief explicit, pick the right source repository, and decide whether you want a collaborative plan or a direct execution pass.
                                     </p>
                                 </div>
-                                <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
-                                    {isLoadingRepos ? 'Loading repos' : `${repos.length} repos available`}
+                                    <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400">
+                                        {isLoadingRepos ? 'Loading repos' : `${allRepos.length} repos available`}
                                 </div>
                             </div>
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, RepoData } from '../../utils/db';
 import TemplateCarousel from '../create/components/TemplateCarousel';
+import { apiClient } from '../../api-client';
 
 interface EditLandingViewProps {
     onSelectRepo: (repo: RepoData) => void;
@@ -108,8 +109,26 @@ const EditLandingView: React.FC<EditLandingViewProps> = ({ onSelectRepo, onSelec
     useEffect(() => {
         const loadRepos = async () => {
             try {
-                const data = await db.getAllRepos();
-                setRepos(data);
+                const [legacyRepos, cfProjects] = await Promise.all([
+                    db.getAllRepos(),
+                    apiClient.getProjects().catch(() => []),
+                ]);
+
+                const normalizedCloudflareRepos: RepoData[] = (cfProjects || []).map((project: any) => ({
+                    id: project.id,
+                    name: project.name,
+                    brief: project.brief || '',
+                    assets: [],
+                    fileSystem: [],
+                    created: typeof project.created_at === 'number'
+                        ? project.created_at * 1000
+                        : Date.now(),
+                }));
+
+                const merged = [...normalizedCloudflareRepos, ...legacyRepos].filter(
+                    (repo, index, array) => array.findIndex((entry) => String(entry.id) === String(repo.id)) === index,
+                );
+                setRepos(merged);
             } catch (error) {
                 console.error("Failed to load repos:", error);
             }
