@@ -2,6 +2,13 @@
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8787';
 
+const withBranchQuery = (url: string, branchName?: string | null) => {
+  if (!branchName) return url;
+  const nextUrl = new URL(url);
+  nextUrl.searchParams.set('branch', branchName);
+  return nextUrl.toString();
+};
+
 export const apiClient = {
   async getProjects() {
     const res = await fetch(`${API_BASE}/api/projects`);
@@ -9,8 +16,8 @@ export const apiClient = {
     return res.json();
   },
 
-  async getProject(id: string) {
-    const res = await fetch(`${API_BASE}/api/projects/${id}`);
+  async getProject(id: string, branchName?: string | null) {
+    const res = await fetch(withBranchQuery(`${API_BASE}/api/projects/${id}`, branchName));
     if (!res.ok) throw new Error('Failed to fetch project');
     return res.json();
   },
@@ -33,28 +40,27 @@ export const apiClient = {
     return res.json();
   },
 
-
-  async getProjectPayload(id: string) {
-    const res = await fetch(`${API_BASE}/api/projects/${id}/payload`);
+  async getProjectPayload(id: string, branchName?: string | null) {
+    const res = await fetch(withBranchQuery(`${API_BASE}/api/projects/${id}/payload`, branchName));
     if (res.status === 404) return null;
     if (!res.ok) throw new Error('Failed to fetch project payload');
     return res.json();
   },
 
-  getArtifactUrl(projectId: string, artifactName: string) {
-    return `${API_BASE}/api/projects/${projectId}/artifacts/${artifactName}`;
+  getArtifactUrl(projectId: string, artifactName: string, branchName?: string | null) {
+    return withBranchQuery(`${API_BASE}/api/projects/${projectId}/artifacts/${artifactName}`, branchName);
   },
 
-  getArtifactContentUrl(projectId: string, artifactName: string) {
-    return `${API_BASE}/api/projects/${projectId}/artifact?name=${encodeURIComponent(artifactName)}`;
+  getArtifactContentUrl(projectId: string, artifactName: string, branchName?: string | null) {
+    return withBranchQuery(`${API_BASE}/api/projects/${projectId}/artifact?name=${encodeURIComponent(artifactName)}`, branchName);
   },
 
   getAssetContentUrl(assetId: string) {
     return `${API_BASE}/api/assets/${assetId}/content`;
   },
 
-  async getArtifactText(projectId: string, artifactName: string) {
-    const res = await fetch(`${API_BASE}/api/projects/${projectId}/artifact?name=${encodeURIComponent(artifactName)}`);
+  async getArtifactText(projectId: string, artifactName: string, branchName?: string | null) {
+    const res = await fetch(withBranchQuery(`${API_BASE}/api/projects/${projectId}/artifact?name=${encodeURIComponent(artifactName)}`, branchName));
     if (!res.ok) throw new Error('Failed to fetch artifact content');
     return res.text();
   },
@@ -98,9 +104,56 @@ export const apiClient = {
     return asset;
   },
 
-  async startIngestion(projectId: string) {
+  async getBranches(projectId: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/branches`);
+    if (!res.ok) throw new Error('Failed to fetch branches');
+    return res.json();
+  },
+
+  async createBranch(projectId: string, name: string, sourceBranch?: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/branches`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, sourceBranch }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to create branch');
+    }
+    return res.json();
+  },
+
+  async switchBranch(projectId: string, branchName: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/branches/switch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branchName }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to switch branch');
+    }
+    return res.json();
+  },
+
+  async mergeBranches(projectId: string, sourceBranch: string, targetBranch: string, message?: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/branches/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceBranch, targetBranch, message }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to merge branches');
+    }
+    return res.json();
+  },
+
+  async startIngestion(projectId: string, branchName?: string | null) {
     const res = await fetch(`${API_BASE}/api/projects/${projectId}/ingest`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(branchName ? { branchName } : {}),
     });
     if (!res.ok) {
       const err = await res.json();

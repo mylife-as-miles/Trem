@@ -8,6 +8,7 @@ interface CommitDetailsViewProps {
         author?: string;
         timestamp: string | number;
         parent?: string | null;
+        parents?: string[];
         branch?: string;
         artifacts?: Record<string, any>;
         state?: Record<string, any>;
@@ -40,6 +41,10 @@ const CommitDetailsView: React.FC<CommitDetailsViewProps> = ({ commit, repoName,
     };
 
     const changedFiles = commit.artifacts || commit.state;
+    const parentCommits = Array.isArray(commit.parents) && commit.parents.length > 0
+        ? commit.parents
+        : (commit.parent ? [commit.parent] : []);
+    const isMergeCommit = parentCommits.length > 1;
     const artifactFiles = changedFiles ? Object.entries(changedFiles).flatMap(([key, value]) => {
         if (Array.isArray(value)) {
             return value.map((file: string) => ({ name: file, type: key }));
@@ -99,6 +104,11 @@ const CommitDetailsView: React.FC<CommitDetailsViewProps> = ({ commit, repoName,
                                             {commit.branch}
                                         </span>
                                     )}
+                                    {isMergeCommit && (
+                                        <span className="px-2 py-0.5 rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-500 font-mono text-xs">
+                                            merge commit
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -127,13 +137,29 @@ const CommitDetailsView: React.FC<CommitDetailsViewProps> = ({ commit, repoName,
                         </div>
                         <div className="glass-panel rounded-xl p-4 border border-slate-200 dark:border-white/10">
                             <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">Parent</div>
-                            <div className="font-mono text-sm text-slate-900 dark:text-white">{commit.parent || 'None (Initial)'}</div>
+                            <div className="font-mono text-sm text-slate-900 dark:text-white">{parentCommits[0] || 'None (Initial)'}</div>
                         </div>
                         <div className="glass-panel rounded-xl p-4 border border-slate-200 dark:border-white/10">
                             <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">Timestamp</div>
                             <div className="font-mono text-xs text-slate-900 dark:text-white">{formatTimestamp(commit.timestamp)}</div>
                         </div>
                     </div>
+
+                    {isMergeCommit && (
+                        <div className="glass-panel rounded-xl p-4 border border-fuchsia-500/20 bg-fuchsia-500/5">
+                            <div className="text-xs text-fuchsia-400 uppercase tracking-[0.18em] font-mono mb-2">Merge Parents</div>
+                            <div className="flex flex-wrap gap-2">
+                                {parentCommits.map((parentId) => (
+                                    <span
+                                        key={parentId}
+                                        className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-3 py-1 font-mono text-xs text-fuchsia-300"
+                                    >
+                                        {parentId}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Changed Files/Artifacts */}
                     {artifactFiles.length > 0 && (
@@ -173,7 +199,7 @@ const CommitDetailsView: React.FC<CommitDetailsViewProps> = ({ commit, repoName,
                     {/* AI Analysis Badge */}
                     <div className="flex items-center justify-center gap-2 py-4">
                         <span className="text-xs font-mono text-primary bg-primary/10 px-3 py-1.5 rounded-full border border-primary/20">
-                            ✨ AI-GENERATED COMMIT
+                            AI-GENERATED COMMIT
                         </span>
                     </div>
                 </div>

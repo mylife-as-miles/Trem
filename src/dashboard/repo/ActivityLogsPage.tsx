@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import CommitDetailsView from './components/CommitDetails';
+import { useSwitchProjectBranch } from '../../hooks/useQueries';
 import { useTremStore } from '../../store/useTremStore';
 
 interface ActivityLogsViewProps {
     repoData?: any;
     onNavigate?: (view: string) => void;
-    onSelectCommit?: (commit: any) => void;
 }
 
 interface CommitEntry {
@@ -14,111 +15,211 @@ interface CommitEntry {
     timestamp: string | number;
     hashtags?: string[];
     parent?: string | null;
+    parents?: string[];
     branch?: string;
     artifacts?: Record<string, any>;
     state?: Record<string, any>;
 }
 
-const ActivityLogsView: React.FC<ActivityLogsViewProps> = (props) => {
-    // Access global store
+const GRAPH_LANE_COLORS = ['#D7FF4A', '#38BDF8', '#FB7185', '#A78BFA', '#F59E0B', '#34D399'];
+
+const buildRepoBranchUrl = (repoId: string | number, suffix = '', branchName?: string | null) => {
+    const url = new URL(`/repo/${repoId}${suffix}`, window.location.origin);
+    if (branchName) {
+        url.searchParams.set('branch', branchName);
+    }
+    return `${url.pathname}${url.search}`;
+};
+
+const getCommitTimestamp = (timestamp: string | number | undefined) => {
+    if (typeof timestamp === 'number') return timestamp;
+    if (typeof timestamp === 'string') {
+        const parsed = new Date(timestamp).getTime();
+        return Number.isNaN(parsed) ? Date.now() : parsed;
+    }
+    return Date.now();
+};
+
+const getCommitParents = (commit: CommitEntry) => {
+    if (Array.isArray(commit.parents) && commit.parents.length > 0) {
+        return commit.parents.filter(Boolean);
+    }
+    return commit.parent ? [commit.parent] : [];
+};
+
+const collectCommitIdsForHead = (commits: CommitEntry[], headId: string | null | undefined) => {
+    if (!headId) return new Set<string>();
+
+    const commitMap = new Map(commits.map((commit) => [commit.id, commit]));
+    const visited = new Set<string>();
+    const stack = [headId];
+
+    while (stack.length > 0) {
+        const currentId = stack.pop();
+        if (!currentId || visited.has(currentId)) continue;
+        visited.add(currentId);
+
+        const commit = commitMap.get(currentId);
+        if (!commit) continue;
+
+        for (const parentId of getCommitParents(commit)) {
+            if (!visited.has(parentId)) {
+                stack.push(parentId);
+            }
+        }
+    }
+
+    return visited;
+};
+
+const getRelativeTime = (timestamp: string | number) => {
+    const diff = Math.floor((Date.now() - getCommitTimestamp(timestamp)) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+};
+
+const formatClockTime = (timestamp: string | number) => {
+    const date = new Date(getCommitTimestamp(timestamp));
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+};
+
+const formatDateLabel = (timestamp: string | number) => {
+    const date = new Date(getCommitTimestamp(timestamp));
+    return date.toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+    });
+};
+
+const getFilesChangedCount = (commit: CommitEntry) => {
+    const changedFiles = commit.artifacts || commit.state || {};
+    return Object.values(changedFiles).flat().filter(Boolean).length;
+};
+
+const ActivityLogsView: React.FC<ActivityLogsViewProps> = ({ repoData: propRepoData, onNavigate }) => {
     const { repoData: storeRepoData, setCurrentView } = useTremStore();
-
-    // Use props if provided (legacy/wrapper), otherwise fallback to store
-    const repoData = props.repoData || storeRepoData;
-
-    // Internal state
-    const [commits, setCommits] = useState<CommitEntry[]>([]);
+    const repoData = propRepoData || storeRepoData;
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedAuthor, setSelectedAuthor] = useState<string>('all');
+    const [selectedAuthor, setSelectedAuthor] = useState('all');
+    const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all');
+    const [selectedCommit, setSelectedCommit] = useState<CommitEntry | null>(null);
 
-    // Handle Back Navigation
-    const handleBack = () => {
-        // "Back" should return to the Repo Overview
-        setCurrentView('repo');
-    };
+    const switchBranchMutation = useSwitchProjectBranch();
+    const backendProjectId = typeof repoData?.id === 'string' ? repoData.id : null;
+    const availableBranches = repoData?.branches || [];
+    const selectedBranch = repoData?.selectedBranch || repoData?.activeBranch || 'main';
+    const branchHeads = repoData?.branchHeads || {};
 
-    // Compute derived state
-    const { filteredCommits, stats, groupedCommits, authors } = useMemo(() => {
-        let filtered = [...commits];
+    useEffect(() => {
+        setSelectedBranchFilter(selectedBranch || 'all');
+    }, [selectedBranch]);
 
-        // Search
+    const commits = useMemo<CommitEntry[]>(() => {
+        const payloadCommits = Array.isArray(repoData?.commits) ? repoData.commits : [];
+        return payloadCommits
+            .map((commit: any) => ({
+                ...commit,
+                author: commit.author || 'Trem-AI',
+                branch: commit.branch || 'main',
+                timestamp: getCommitTimestamp(commit.timestamp),
+                hashtags: Array.isArray(commit.hashtags) ? commit.hashtags : [],
+                parents: Array.isArray(commit.parents) ? commit.parents : undefined,
+            }))
+            .sort((a, b) => getCommitTimestamp(b.timestamp) - getCommitTimestamp(a.timestamp));
+    }, [repoData]);
+
+    const authors = useMemo(
+        () => Array.from(new Set(commits.map((commit) => commit.author).filter(Boolean))),
+        [commits],
+    );
+
+    const filteredCommits = useMemo(() => {
+        let branchScopedCommits = commits;
+
+        if (selectedBranchFilter !== 'all') {
+            const headId =
+                branchHeads[selectedBranchFilter] ||
+                availableBranches.find((branch: any) => branch.name === selectedBranchFilter)?.headCommitId ||
+                null;
+            const visibleCommitIds = collectCommitIdsForHead(commits, headId);
+            branchScopedCommits = commits.filter((commit) => visibleCommitIds.has(commit.id));
+        }
+
+        let filtered = branchScopedCommits;
+
         if (searchQuery.trim()) {
-            filtered = filtered.filter(c =>
-                (c.message || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                c.hashtags?.some(t => (t || '').toLowerCase().includes(searchQuery.toLowerCase()))
+            const search = searchQuery.toLowerCase();
+            filtered = filtered.filter((commit) =>
+                commit.message.toLowerCase().includes(search) ||
+                commit.id.toLowerCase().includes(search) ||
+                commit.branch?.toLowerCase().includes(search) ||
+                commit.hashtags?.some((tag) => tag.toLowerCase().includes(search)),
             );
         }
 
-        // Author
         if (selectedAuthor !== 'all') {
-            filtered = filtered.filter(c => c.author === selectedAuthor);
+            filtered = filtered.filter((commit) => commit.author === selectedAuthor);
         }
 
-        // Stats
-        const total = commits.length;
-        const aiCommits = commits.filter(c => (c.author || '').toLowerCase().includes('bot') || (c.author || '').toLowerCase().includes('ai') || c.hashtags?.includes('#ai-generated')).length;
-        const authorsList = Array.from(new Set(commits.map(c => c.author)));
+        return filtered;
+    }, [availableBranches, branchHeads, commits, searchQuery, selectedAuthor, selectedBranchFilter]);
 
-        // Grouping
-        const groups: Record<string, CommitEntry[]> = {};
-        filtered.forEach(commit => {
-            // Safe timestamp handling
-            const ts = commit.timestamp || Date.now();
-            const date = new Date(ts);
-
-            // Validate date
-            const validDate = isNaN(date.getTime()) ? new Date() : date;
-
-            const key = validDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-            if (!groups[key]) groups[key] = [];
+    const groupedCommits = useMemo(() => {
+        return filteredCommits.reduce<Record<string, CommitEntry[]>>((groups, commit) => {
+            const key = formatDateLabel(commit.timestamp);
+            if (!groups[key]) {
+                groups[key] = [];
+            }
             groups[key].push(commit);
-        });
+            return groups;
+        }, {});
+    }, [filteredCommits]);
+
+    const stats = useMemo(() => {
+        const total = commits.length;
+        const aiCommits = commits.filter((commit) =>
+            (commit.author || '').toLowerCase().includes('ai') ||
+            (commit.author || '').toLowerCase().includes('bot'),
+        ).length;
 
         return {
-            filteredCommits: filtered,
-            stats: { total, aiCommits, humanCommits: total - aiCommits },
-            groupedCommits: groups,
-            authors: authorsList
+            total,
+            aiCommits,
+            branches: availableBranches.length,
+            heads: Object.values(branchHeads).filter(Boolean).length,
         };
-    }, [commits, searchQuery, selectedAuthor]);
+    }, [availableBranches.length, branchHeads, commits]);
 
-    // Load Data
-    useEffect(() => {
-        if (repoData?.fileSystem) {
-            const commitsFolder = repoData.fileSystem.find((node: any) => node.name === 'commits');
-            if (commitsFolder?.children) {
-                const extracted: CommitEntry[] = commitsFolder.children
-                    .map((f: any) => {
-                        if (f.type === 'file' && f.content) {
-                            try {
-                                const parsed = JSON.parse(f.content);
-                                return {
-                                    ...parsed,
-                                    author: parsed.author || 'Trem-AI',
-                                };
-                            } catch {
-                                return null;
-                            }
-                        }
-                        return null;
-                    })
-                    .filter((c: any) => c !== null)
-                    .sort((a: any, b: any) => {
-                        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-                        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-                        return timeB - timeA;
-                    });
-                setCommits(extracted);
-            }
+    const visibleBranches = useMemo(() => {
+        const ordered = availableBranches.map((branch: any) => branch.name);
+        const commitBranches = filteredCommits.map((commit) => commit.branch || 'main');
+        return Array.from(new Set([...ordered, ...commitBranches]));
+    }, [availableBranches, filteredCommits]);
+
+    const laneMap = useMemo(() => {
+        return visibleBranches.reduce<Record<string, number>>((map, branchName, index) => {
+            map[branchName] = index;
+            return map;
+        }, {});
+    }, [visibleBranches]);
+
+    const commitMap = useMemo(() => new Map(commits.map((commit) => [commit.id, commit])), [commits]);
+
+    const handleBack = () => {
+        if (repoData?.id && onNavigate) {
+            onNavigate(buildRepoBranchUrl(repoData.id, '', selectedBranch).slice(1));
+            return;
         }
-    }, [repoData]);
+        setCurrentView('repo');
+    };
 
-    const formatTime = (ts: string | number) => {
-        if (!ts) return "Just now";
-        const date = new Date(ts);
-        return isNaN(date.getTime())
-            ? "Just now"
-            : date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const handleBranchSwitch = async (branchName: string) => {
+        if (!backendProjectId || !onNavigate || branchName === selectedBranch) return;
+        await switchBranchMutation.mutateAsync({ projectId: backendProjectId, branchName });
+        onNavigate(buildRepoBranchUrl(backendProjectId, '/logs', branchName).slice(1));
     };
 
     if (!repoData) {
@@ -126,190 +227,329 @@ const ActivityLogsView: React.FC<ActivityLogsViewProps> = (props) => {
     }
 
     return (
-        <div className="h-full flex flex-col bg-slate-50 dark:bg-black p-6 lg:p-10 overflow-hidden">
-
-            {/* Header & Stats Nav */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 flex-shrink-0 animate-fadeIn">
+        <div className="flex h-full flex-col overflow-hidden bg-slate-50 p-6 text-slate-900 dark:bg-black dark:text-white lg:p-10">
+            <div className="mb-8 flex flex-col gap-6 animate-fadeIn xl:flex-row xl:items-end xl:justify-between">
                 <div>
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="mb-2 flex items-center gap-2">
                         <button
                             onClick={handleBack}
-                            className="p-1.5 -ml-2 rounded-full hover:bg-slate-200 dark:hover:bg-white/10 text-slate-400 transition-colors"
+                            className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-white/10 dark:hover:text-white"
                         >
                             <span className="material-icons-outlined">arrow_back</span>
                         </button>
-                        <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white tracking-tight">
+                        <h1 className="text-3xl font-display font-bold tracking-tight text-slate-900 dark:text-white">
                             Activity Log
                         </h1>
                     </div>
-                    <p className="text-slate-500 dark:text-slate-400 max-w-xl">
-                        Track the evolution of <span className="text-slate-700 dark:text-white font-medium font-mono">{repoData?.name}</span> through AI generations and manual edits.
+                    <p className="max-w-2xl text-slate-500 dark:text-slate-400">
+                        Track the evolution of{' '}
+                        <span className="font-mono font-medium text-slate-800 dark:text-white">{repoData?.name}</span>{' '}
+                        across branches, merges, AI generations, and manual edits.
                     </p>
                 </div>
 
-                {/* Micro Stats Dashboard */}
-                <div className="flex gap-4">
-                    <div className="glass-panel px-5 py-3 rounded-2xl border border-slate-200 dark:border-white/10 bg-white/50 dark:bg-white/5">
-                        <div className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Total Commits</div>
-                        <div className="text-2xl font-bold text-slate-900 dark:text-white font-display">{stats.total}</div>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white/60 px-5 py-4 dark:border-white/10 dark:bg-white/5">
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500">Total Commits</div>
+                        <div className="text-3xl font-display font-bold text-slate-900 dark:text-white">{stats.total}</div>
                     </div>
-                    <div className="glass-panel px-5 py-3 rounded-2xl border border-slate-200 dark:border-white/10 bg-white/50 dark:bg-white/5 hidden sm:block">
-                        <div className="text-xs text-emerald-600 dark:text-primary uppercase tracking-wider font-semibold mb-1">AI Generated</div>
-                        <div className="text-2xl font-bold text-slate-900 dark:text-white font-display">{stats.aiCommits}</div>
+                    <div className="rounded-2xl border border-slate-200 bg-white/60 px-5 py-4 dark:border-white/10 dark:bg-white/5">
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-primary">AI Generated</div>
+                        <div className="text-3xl font-display font-bold text-slate-900 dark:text-white">{stats.aiCommits}</div>
                     </div>
-                </div>
-            </div>
-
-            {/* Filter Bar */}
-            <div className="mb-8 flex-shrink-0 z-20">
-                <div className="glass-panel p-2 rounded-xl border border-slate-200 dark:border-white/10 bg-white/50 dark:bg-white/5 flex flex-col md:flex-row gap-2">
-                    <div className="relative flex-1 group">
-                        <span className="material-icons-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-emerald-600 dark:group-focus-within:text-primary transition-colors">search</span>
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Filter by message, hash, or tag..."
-                            className="w-full bg-transparent border-none outline-none pl-10 pr-4 py-2.5 text-slate-900 dark:text-white placeholder-slate-500"
-                        />
+                    <div className="rounded-2xl border border-slate-200 bg-white/60 px-5 py-4 dark:border-white/10 dark:bg-white/5">
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500">Branches</div>
+                        <div className="text-3xl font-display font-bold text-slate-900 dark:text-white">{stats.branches}</div>
                     </div>
-                    <div className="h-px md:h-auto md:w-px bg-slate-200 dark:bg-white/10 mx-2" />
-                    <div className="flex items-center gap-2 px-2">
-                        <span className="text-sm text-slate-500 font-medium">Author:</span>
-                        <select
-                            value={selectedAuthor}
-                            onChange={(e) => setSelectedAuthor(e.target.value)}
-                            className="bg-transparent text-sm font-medium text-slate-700 dark:text-slate-200 outline-none cursor-pointer hover:text-emerald-600 dark:hover:text-primary transition-colors pr-8 py-2 border-none ring-0 focus:ring-0"
-                        >
-                            <option value="all">All Contributors</option>
-                            {authors.map(a => <option key={a} value={a}>{a}</option>)}
-                        </select>
+                    <div className="rounded-2xl border border-primary/20 bg-primary/10 px-5 py-4">
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-primary">Active Head</div>
+                        <div className="text-base font-mono font-bold text-slate-900 dark:text-white">
+                            {branchHeads[selectedBranch] || 'none'}
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Timeline Content */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar pr-4 relative">
-                {/* Vertical Timeline Line */}
-                <div className="absolute left-8 top-4 bottom-0 w-px bg-gradient-to-b from-slate-300 via-slate-200 to-transparent dark:from-white/20 dark:via-white/5 dark:to-transparent" />
+            <div className="mb-8 space-y-4">
+                <div className="rounded-xl border border-slate-200 bg-white/50 p-2 dark:border-white/10 dark:bg-white/5">
+                    <div className="flex flex-col gap-2 xl:flex-row">
+                        <div className="group relative flex-1">
+                            <span className="material-icons-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-primary">
+                                search
+                            </span>
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(event) => setSearchQuery(event.target.value)}
+                                placeholder="Filter by message, hash, branch, or tag..."
+                                className="w-full border-none bg-transparent py-2.5 pl-10 pr-4 text-slate-900 outline-none placeholder:text-slate-500 dark:text-white"
+                            />
+                        </div>
 
+                        <div className="h-px bg-slate-200 dark:bg-white/10 xl:h-auto xl:w-px" />
+
+                        {backendProjectId && (
+                            <div className="flex items-center gap-2 px-2">
+                                <span className="text-sm text-slate-500">Workspace:</span>
+                                <select
+                                    value={selectedBranch}
+                                    onChange={(event) => void handleBranchSwitch(event.target.value)}
+                                    className="bg-transparent py-2 text-sm font-medium text-slate-700 outline-none transition-colors hover:text-primary dark:text-slate-200"
+                                >
+                                    {availableBranches.map((branch: any) => (
+                                        <option key={branch.name} value={branch.name}>
+                                            {branch.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="h-px bg-slate-200 dark:bg-white/10 xl:h-auto xl:w-px" />
+
+                        <div className="flex items-center gap-2 px-2">
+                            <span className="text-sm text-slate-500">Branch:</span>
+                            <select
+                                value={selectedBranchFilter}
+                                onChange={(event) => setSelectedBranchFilter(event.target.value)}
+                                className="bg-transparent py-2 text-sm font-medium text-slate-700 outline-none transition-colors hover:text-primary dark:text-slate-200"
+                            >
+                                <option value="all">All Branches</option>
+                                {availableBranches.map((branch: any) => (
+                                    <option key={branch.name} value={branch.name}>
+                                        {branch.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="h-px bg-slate-200 dark:bg-white/10 xl:h-auto xl:w-px" />
+
+                        <div className="flex items-center gap-2 px-2">
+                            <span className="text-sm text-slate-500">Author:</span>
+                            <select
+                                value={selectedAuthor}
+                                onChange={(event) => setSelectedAuthor(event.target.value)}
+                                className="bg-transparent py-2 text-sm font-medium text-slate-700 outline-none transition-colors hover:text-primary dark:text-slate-200"
+                            >
+                                <option value="all">All Contributors</option>
+                                {authors.map((author) => (
+                                    <option key={author} value={author}>
+                                        {author}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                {availableBranches.length > 0 && (
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        {availableBranches.map((branch: any, index: number) => {
+                            const isSelectedScope = selectedBranchFilter === branch.name;
+                            const isWorkspace = selectedBranch === branch.name;
+                            return (
+                                <button
+                                    key={branch.name}
+                                    type="button"
+                                    onClick={() => setSelectedBranchFilter(branch.name)}
+                                    className={`rounded-2xl border px-4 py-4 text-left transition ${
+                                        isSelectedScope
+                                            ? 'border-primary/20 bg-primary/10'
+                                            : 'border-slate-200 bg-white/60 hover:border-primary/20 hover:bg-primary/5 dark:border-white/10 dark:bg-white/5'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div className="flex items-center gap-2">
+                                            <span
+                                                className="h-2.5 w-2.5 rounded-full"
+                                                style={{ backgroundColor: GRAPH_LANE_COLORS[index % GRAPH_LANE_COLORS.length] }}
+                                            />
+                                            <span className="font-mono text-sm font-semibold text-slate-900 dark:text-white">
+                                                {branch.name}
+                                            </span>
+                                        </div>
+                                        {isWorkspace && (
+                                            <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-primary">
+                                                Active
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="mt-3 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">
+                                        Head
+                                    </div>
+                                    <div className="mt-1 font-mono text-xs text-slate-600 dark:text-slate-300">
+                                        {branch.headCommitId || 'No commits yet'}
+                                    </div>
+                                    <div className="mt-3 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">
+                                        Source
+                                    </div>
+                                    <div className="mt-1 font-mono text-xs text-slate-500 dark:text-zinc-400">
+                                        {branch.sourceBranch || 'root'}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
                 <div className="space-y-8 pb-10">
-                    {Object.entries(groupedCommits).map(([date, groupCommits]) => (
-                        <div key={date} className="relative">
-                            {/* Date Marker */}
-                            <div className="sticky top-0 z-10 flex items-center gap-4 mb-6 pt-2 bg-slate-50/95 dark:bg-black/95 backdrop-blur-sm py-2">
-                                <div className="w-16 flex justify-end">
-                                    <span className="material-icons-outlined text-slate-300 dark:text-slate-600 text-sm">calendar_today</span>
+                    {Object.entries(groupedCommits).map(([date, commitsForDate]) => (
+                        <div key={date}>
+                            <div className="sticky top-0 z-10 mb-5 flex items-center gap-4 bg-slate-50/95 py-2 backdrop-blur-sm dark:bg-black/95">
+                                <div className="w-20 text-right">
+                                    <span className="material-icons-outlined text-sm text-slate-300 dark:text-zinc-600">
+                                        calendar_today
+                                    </span>
                                 </div>
-                                <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                                <h3 className="text-sm font-bold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">
                                     {date}
                                 </h3>
                             </div>
 
                             <div className="space-y-4">
-                                {groupCommits.map((commit, idx) => {
-                                    const isAI = (commit.author || '').toLowerCase().includes('bot') || (commit.author || '').toLowerCase().includes('ai') || commit.hashtags?.includes('#ai-generated');
+                                {commitsForDate.map((commit) => {
+                                    const laneIndex = laneMap[commit.branch || 'main'] ?? 0;
+                                    const laneCount = Math.max(visibleBranches.length, 1);
+                                    const laneSpacing = 18;
+                                    const laneOffset = 18;
+                                    const commitX = laneOffset + (laneIndex * laneSpacing);
+                                    const parentBranches = getCommitParents(commit)
+                                        .map((parentId) => commitMap.get(parentId)?.branch)
+                                        .filter((branchName): branchName is string => Boolean(branchName));
+                                    const mergeTargets = Array.from(
+                                        new Set(parentBranches.filter((branchName) => branchName !== (commit.branch || 'main'))),
+                                    );
+                                    const isMergeCommit = getCommitParents(commit).length > 1;
+                                    const isAiCommit =
+                                        (commit.author || '').toLowerCase().includes('ai') ||
+                                        (commit.author || '').toLowerCase().includes('bot');
+                                    const isBranchHead = branchHeads[commit.branch || 'main'] === commit.id;
 
                                     return (
-                                        <div
+                                        <button
                                             key={commit.id}
-                                            onClick={() => props.onSelectCommit?.(commit)}
-                                            className="group relative flex items-start gap-6 cursor-pointer"
+                                            type="button"
+                                            onClick={() => setSelectedCommit(commit)}
+                                            className="group grid w-full grid-cols-[88px_minmax(0,1fr)] gap-5 text-left"
                                         >
-                                            {/* Timeline Node */}
-                                            <div className="absolute left-[31px] top-6 w-3 h-3 rounded-full bg-slate-200 dark:bg-zinc-800 border-2 border-slate-300 dark:border-white/20 group-hover:bg-primary group-hover:border-primary transition-all shadow-[0_0_0_4px_rgba(0,0,0,0)] group-hover:shadow-[0_0_0_4px_rgba(99,102,241,0.2)] z-10" />
+                                            <div className="relative min-h-[116px]">
+                                                {Array.from({ length: laneCount }).map((_, index) => (
+                                                    <div
+                                                        key={`lane-${commit.id}-${index}`}
+                                                        className="absolute bottom-0 top-0 w-px opacity-60"
+                                                        style={{
+                                                            left: `${laneOffset + (index * laneSpacing)}px`,
+                                                            backgroundColor: `${GRAPH_LANE_COLORS[index % GRAPH_LANE_COLORS.length]}33`,
+                                                        }}
+                                                    />
+                                                ))}
 
-                                            {/* Time Column */}
-                                            <div className="w-16 pt-5 text-right flex-shrink-0">
-                                                <span className="text-xs font-mono text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200 transition-colors">
-                                                    {formatTime(commit.timestamp)}
-                                                </span>
-                                            </div>
+                                                {mergeTargets.map((branchName) => {
+                                                    const parentLaneIndex = laneMap[branchName] ?? 0;
+                                                    const parentX = laneOffset + (parentLaneIndex * laneSpacing);
+                                                    return (
+                                                        <div
+                                                            key={`${commit.id}-${branchName}`}
+                                                            className="absolute h-px"
+                                                            style={{
+                                                                top: '28px',
+                                                                left: `${Math.min(commitX, parentX)}px`,
+                                                                width: `${Math.abs(parentX - commitX)}px`,
+                                                                backgroundColor:
+                                                                    GRAPH_LANE_COLORS[parentLaneIndex % GRAPH_LANE_COLORS.length],
+                                                            }}
+                                                        />
+                                                    );
+                                                })}
 
-                                            {/* Content Card */}
-                                            <div className="flex-1 min-w-0">
-                                                <div className="glass-panel p-5 rounded-2xl border border-slate-200 dark:border-white/5 bg-white dark:bg-zinc-900/50 hover:bg-white hover:shadow-lg dark:hover:bg-zinc-800 transition-all duration-200 group-hover:translate-x-1">
-                                                    <div className="flex items-start justify-between gap-4">
-                                                        <div className="flex items-start gap-4">
-                                                            {/* Avatar */}
-                                                            <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isAI
-                                                                ? 'bg-gradient-to-br from-primary/20 to-emerald-500/20 text-primary'
-                                                                : 'bg-slate-100 dark:bg-white/10 text-slate-500 dark:text-slate-400'
-                                                                }`}>
-                                                                <span className="material-icons-outlined text-lg">
-                                                                    {isAI ? 'auto_awesome' : 'person'}
-                                                                </span>
-                                                            </div>
+                                                <div
+                                                    className="absolute h-3.5 w-3.5 rounded-full border-2 border-black shadow-[0_0_0_4px_rgba(215,255,74,0.12)] dark:border-black"
+                                                    style={{
+                                                        top: '22px',
+                                                        left: `${commitX - 6}px`,
+                                                        backgroundColor: GRAPH_LANE_COLORS[laneIndex % GRAPH_LANE_COLORS.length],
+                                                    }}
+                                                />
 
-                                                            <div>
-                                                                <div className="flex items-center gap-2 mb-1">
-                                                                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">
-                                                                        {commit.author}
-                                                                    </span>
-                                                                    {isAI && (
-                                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/10 text-emerald-600 dark:text-primary border border-primary/20 uppercase tracking-wide">
-                                                                            AI
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <h4 className="text-base font-medium text-slate-900 dark:text-white mb-2 leading-relaxed">
-                                                                    {commit.message}
-                                                                </h4>
-
-                                                                {/* Hashtags */}
-                                                                {commit.hashtags && commit.hashtags.length > 0 && (
-                                                                    <div className="flex flex-wrap gap-2 mt-3">
-                                                                        {commit.hashtags.map(t => (
-                                                                            <span key={t} className="text-xs font-mono text-emerald-600 dark:text-primary bg-emerald-500/5 px-2 py-0.5 rounded hover:bg-emerald-500/10 transition-colors">
-                                                                                {t}
-                                                                            </span>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Commit Hash */}
-                                                        <div className="flex flex-col items-end gap-2">
-                                                            <div className="font-mono text-xs text-slate-400 bg-slate-100 dark:bg-white/5 px-2 py-1 rounded border border-slate-200 dark:border-white/5 group-hover:border-primary/20 transition-colors">
-                                                                {commit.id.substring(0, 7)}
-                                                            </div>
-                                                        </div>
+                                                <div className="absolute left-0 top-4 w-16 text-right">
+                                                    <div className="text-xs font-mono text-slate-400 transition-colors group-hover:text-slate-600 dark:group-hover:text-slate-200">
+                                                        {formatClockTime(commit.timestamp)}
                                                     </div>
-
-                                                    {/* Changed Files Footer (Collapsible-ish feel) */}
-                                                    {(commit.artifacts || commit.state) && Object.keys(commit.artifacts || commit.state || {}).length > 0 && (
-                                                        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-white/5 flex items-center gap-4">
-                                                            <div className="flex -space-x-2">
-                                                                {Object.keys(commit.artifacts || commit.state || {}).slice(0, 4).map((type, i) => (
-                                                                    <div
-                                                                        key={i}
-                                                                        className="w-6 h-6 rounded-full bg-slate-100 dark:bg-zinc-800 border border-white dark:border-zinc-700 flex items-center justify-center relative z-[1]"
-                                                                        title={type}
-                                                                    >
-                                                                        <span className={`material-icons-outlined text-[10px] ${type === 'timeline' || type === 'otio' ? 'text-primary' :
-                                                                            type === 'dag' ? 'text-emerald-500' :
-                                                                                type === 'scenes' ? 'text-emerald-400' :
-                                                                                    'text-slate-400'
-                                                                            }`}>
-                                                                            {type === 'timeline' || type === 'otio' ? 'videocam' : type === 'dag' ? 'account_tree' : type === 'scenes' ? 'movie' : 'description'}
-                                                                        </span>
-                                                                    </div>
-                                                                ))}
-                                                                {Object.keys(commit.artifacts || commit.state || {}).length > 4 && (
-                                                                    <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-zinc-800 border border-white dark:border-zinc-700 flex items-center justify-center text-[8px] font-bold text-slate-500 z-[5]">
-                                                                        +{Object.keys(commit.artifacts || commit.state || {}).length - 4}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            <span className="text-xs text-slate-400">
-                                                                {Object.values(commit.artifacts || commit.state || {}).flat().length} files changed
-                                                            </span>
-                                                        </div>
-                                                    )}
                                                 </div>
                                             </div>
-                                        </div>
+
+                                            <div className="min-w-0">
+                                                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-5 transition-all duration-200 group-hover:border-primary/20 group-hover:bg-white group-hover:shadow-lg group-hover:shadow-primary/5 dark:border-white/5 dark:bg-zinc-900/60 dark:group-hover:bg-zinc-900">
+                                                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <span className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                                                                    {commit.author}
+                                                                </span>
+                                                                {isAiCommit && (
+                                                                    <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-primary">
+                                                                        AI
+                                                                    </span>
+                                                                )}
+                                                                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-zinc-500">
+                                                                    {commit.branch || 'main'}
+                                                                </span>
+                                                                {isBranchHead && (
+                                                                    <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-sky-400">
+                                                                        Head
+                                                                    </span>
+                                                                )}
+                                                                {isMergeCommit && (
+                                                                    <span className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-fuchsia-400">
+                                                                        Merge
+                                                                    </span>
+                                                                )}
+                                                            </div>
+
+                                                            <h4 className="mt-3 text-base font-medium leading-relaxed text-slate-900 dark:text-white">
+                                                                {commit.message}
+                                                            </h4>
+
+                                                            <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-400 dark:text-zinc-500">
+                                                                <span className="font-mono">{commit.id}</span>
+                                                                <span>{getRelativeTime(commit.timestamp)}</span>
+                                                                <span>{getFilesChangedCount(commit)} files changed</span>
+                                                                {isMergeCommit && mergeTargets.length > 0 && (
+                                                                    <span className="font-mono text-fuchsia-400">
+                                                                        joins {mergeTargets.join(', ')}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+
+                                                            {commit.hashtags && commit.hashtags.length > 0 && (
+                                                                <div className="mt-4 flex flex-wrap gap-2">
+                                                                    {commit.hashtags.map((tag) => (
+                                                                        <span
+                                                                            key={tag}
+                                                                            className="rounded-full bg-emerald-500/5 px-2 py-0.5 text-xs font-mono text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-primary"
+                                                                        >
+                                                                            {tag}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        <div className="flex flex-col items-start gap-3 xl:items-end">
+                                                            <div className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1 font-mono text-xs text-slate-500 transition-colors group-hover:border-primary/20 group-hover:text-slate-700 dark:border-white/5 dark:bg-white/5 dark:text-zinc-500">
+                                                                {commit.id.substring(0, 7)}
+                                                            </div>
+                                                            <span className="material-icons-outlined text-sm text-slate-300 opacity-0 transition-opacity group-hover:opacity-100 dark:text-zinc-600">
+                                                                open_in_new
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </button>
                                     );
                                 })}
                             </div>
@@ -317,14 +557,22 @@ const ActivityLogsView: React.FC<ActivityLogsViewProps> = (props) => {
                     ))}
 
                     {filteredCommits.length === 0 && (
-                        <div className="flex flex-col items-center justify-center py-20 opacity-50">
-                            <span className="material-icons-outlined text-6xl mb-4">filter_list_off</span>
+                        <div className="flex flex-col items-center justify-center py-20 opacity-60">
+                            <span className="material-icons-outlined mb-4 text-6xl">filter_list_off</span>
                             <h3 className="text-xl font-medium">No activity found</h3>
                             <p className="text-sm">Try adjusting your filters</p>
                         </div>
                     )}
                 </div>
             </div>
+
+            {selectedCommit && (
+                <CommitDetailsView
+                    commit={selectedCommit}
+                    repoName={repoData?.name}
+                    onClose={() => setSelectedCommit(null)}
+                />
+            )}
         </div>
     );
 };

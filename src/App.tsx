@@ -18,6 +18,13 @@ import { useRepo, useProjectPayload } from './hooks/useQueries';
 
 const COMMIT_FILE_PATTERN = /^commits\/\d{4}\.json$/;
 
+const buildBranchUrl = (path: string, branchName?: string | null) => {
+    if (!branchName) return path;
+    const url = new URL(path, window.location.origin);
+    url.searchParams.set('branch', branchName);
+    return `${url.pathname}${url.search}`;
+};
+
 const normalizeTimestamp = (value: unknown) => {
     if (typeof value === 'number') return value;
     if (typeof value === 'string') {
@@ -101,6 +108,7 @@ const sortFileTree = (nodes: any[]): any[] =>
 
 const buildBackendFileSystem = (projectPayload: any) => {
     const projectId = String(projectPayload.project?.id || '');
+    const selectedBranch = String(projectPayload.selectedBranch || projectPayload.activeBranch || 'main');
     const fileTree: any[] = [];
 
     ensureFolderNode(fileTree, ['media', 'raw_footage']);
@@ -121,6 +129,10 @@ const buildBackendFileSystem = (projectPayload: any) => {
     });
 
     (projectPayload.commits || []).forEach((commit: any) => {
+        const visibleCommitIds = new Set((projectPayload.currentBranchCommits || []).map((item: any) => item.id));
+        if (!visibleCommitIds.has(commit.id)) {
+            return;
+        }
         const commitPath = `commits/${commit.id}.json`;
         const visuals = artifactIconForName(commitPath);
         insertFileNode(fileTree, commitPath, {
@@ -157,7 +169,7 @@ const buildBackendFileSystem = (projectPayload: any) => {
             readonly: true,
             size: artifact.size,
             mimeType: artifact.content_type,
-            contentUrl: apiClient.getArtifactContentUrl(projectId, artifactName),
+            contentUrl: apiClient.getArtifactContentUrl(projectId, artifactName, selectedBranch),
             icon: visuals.icon,
             iconColor: visuals.iconColor,
         });
@@ -188,6 +200,21 @@ const buildBackendRepoData = (projectPayload: any): RepoData => {
         assets: projectPayload.assets || [],
         fileSystem: buildBackendFileSystem(projectPayload),
         commits,
+        currentBranchCommits: (projectPayload.currentBranchCommits || [])
+            .slice()
+            .sort((a: any, b: any) => normalizeTimestamp(b.timestamp) - normalizeTimestamp(a.timestamp))
+            .map((commit: any) => ({
+                ...commit,
+                agent: commit.author || 'Trem-AI',
+                author: commit.author || 'Trem-AI',
+                message: commit.message || `Commit ${commit.id}`,
+                timestamp: normalizeTimestamp(commit.timestamp),
+                hashtags: Array.isArray(commit.hashtags) ? commit.hashtags : [],
+            })),
+        branches: projectPayload.branches || [],
+        branchHeads: projectPayload.branchHeads || {},
+        activeBranch: projectPayload.activeBranch || 'main',
+        selectedBranch: projectPayload.selectedBranch || projectPayload.activeBranch || 'main',
         status: projectPayload.liveStatus || projectPayload.activeJob?.status || 'idle',
         created: projectPayload.project.created_at ? (projectPayload.project.created_at * 1000) : Date.now()
     };
@@ -207,10 +234,11 @@ const App: React.FC = () => {
     // Local State for Query
     const [activeRepoId, setActiveRepoId] = useState<number | undefined>(undefined);
     const [activeProjectId, setActiveProjectId] = useState<string | undefined>(undefined);
+    const [activeProjectBranch, setActiveProjectBranch] = useState<string | undefined>(undefined);
     
     // Fetchers
     const { data: fetchedRepo, isLoading: isRepoLoading } = useRepo(activeRepoId);
-    const { data: projectPayload, isLoading: isProjectLoading, isFetched: isProjectPayloadFetched } = useProjectPayload(activeProjectId);
+    const { data: projectPayload, isLoading: isProjectLoading, isFetched: isProjectPayloadFetched } = useProjectPayload(activeProjectId, activeProjectBranch);
 
     // Sync Query Data (Local) to Store
     useEffect(() => {
@@ -223,11 +251,12 @@ const App: React.FC = () => {
         if (projectPayload && activeProjectId) {
             try {
                 setRepoData(buildBackendRepoData(projectPayload));
+                setActiveProjectBranch(projectPayload.selectedBranch || projectPayload.activeBranch || activeProjectBranch);
             } catch (e) {
                 console.error("Failed to sync backend project payload", e);
             }
         }
-    }, [projectPayload, activeProjectId, setRepoData]);
+    }, [projectPayload, activeProjectBranch, activeProjectId, setRepoData]);
 
     useEffect(() => {
         if (!activeProjectId || !isProjectPayloadFetched || projectPayload !== null) {
@@ -237,6 +266,7 @@ const App: React.FC = () => {
         const path = window.location.pathname;
         setRepoData(null);
         setActiveProjectId(undefined);
+        setActiveProjectBranch(undefined);
 
         if (path.startsWith('/create-repo/')) {
             window.history.replaceState({}, '', '/create-repo');
@@ -253,44 +283,55 @@ const App: React.FC = () => {
     // Initial Route Handling & PopState Listener
     useEffect(() => {
         const handleRoute = async () => {
-            const path = window.location.pathname;
+            const currentUrl = new URL(window.location.href);
+            const path = currentUrl.pathname;
+            const branchQuery = currentUrl.searchParams.get('branch') || undefined;
 
             if (path === '/') {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 window.history.replaceState({}, '', '/trem-edit');
                 setCurrentView('trem-edit');
             }
             else if (path === '/timeline') {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 setCurrentView('timeline');
             }
             else if (path === '/diff') {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 setCurrentView('diff');
             }
             else if (path === '/assets') {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 setCurrentView('assets');
             }
             else if (path === '/create-repo') {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 setCurrentView('create-repo');
             }
             else if (path.startsWith('/create-repo/')) {
                 const projectId = path.split('/')[2];
                 setActiveProjectId(projectId || undefined);
+                setActiveProjectBranch(branchQuery);
                 setCurrentView('create-repo');
             }
             else if (path === '/trem-create') {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 setCurrentView('trem-create');
             }
             else if (path === '/trem-edit') {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 setCurrentView('trem-edit');
             }
             else if (path === '/repo-files' && repoData) {
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 setCurrentView('repo-files');
             }
             else if (path.startsWith('/repo/')) {
@@ -302,9 +343,11 @@ const App: React.FC = () => {
                     if (!isNaN(idNum) && idStr.length < 10) {
                         setActiveRepoId(idNum);
                         setActiveProjectId(undefined);
+                        setActiveProjectBranch(undefined);
                     } else {
                         setActiveRepoId(undefined);
                         setActiveProjectId(idStr);
+                        setActiveProjectBranch(branchQuery);
                     }
                     // View logic
                     if (path.endsWith('/files')) {
@@ -319,11 +362,13 @@ const App: React.FC = () => {
                 // Default to Trem Edit for unknown routes, but keep the old orchestrator alias.
                 if (path === '/orchestrator') {
                     setActiveProjectId(undefined);
+                    setActiveProjectBranch(undefined);
                     window.history.replaceState({}, '', '/trem-edit');
                     setCurrentView('trem-edit');
                     return;
                 }
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 window.history.replaceState({}, '', '/trem-edit');
                 setCurrentView('trem-edit');
             }
@@ -345,6 +390,7 @@ const App: React.FC = () => {
             case 'assets': url = '/assets'; break;
             case 'create-repo':
                 setActiveProjectId(undefined);
+                setActiveProjectBranch(undefined);
                 url = '/create-repo';
                 break;
             case 'trem-create': url = '/trem-create'; break;
@@ -353,7 +399,7 @@ const App: React.FC = () => {
             case 'dashboard': url = '/trem-edit'; break; // Dashboard maps to TremEdit
             case 'repo':
                 if (repoData?.id) {
-                    url = `/repo/${repoData.id}`;
+                    url = buildBranchUrl(`/repo/${repoData.id}`, repoData.selectedBranch || repoData.activeBranch);
                 } else if (typeof view === 'string' && view.startsWith('repo/')) {
                     url = `/${view}`;
                 }
@@ -361,7 +407,7 @@ const App: React.FC = () => {
                 break;
             case 'repo-files':
                 if (repoData?.id) {
-                    url = `/repo/${repoData.id}/files`;
+                    url = buildBranchUrl(`/repo/${repoData.id}/files`, repoData.selectedBranch || repoData.activeBranch);
                 } else if (typeof view === 'string' && view.startsWith('repo/files/')) {
                     url = `/${view}`;
                 }
@@ -379,8 +425,12 @@ const App: React.FC = () => {
                 break;
         }
 
-        if (!(typeof view === 'string' && view.startsWith('create-repo/')) && view !== 'create-repo') {
+        const isDynamicCreateRepo = typeof view === 'string' && view.startsWith('create-repo/');
+        const isDynamicRepoRoute = typeof view === 'string' && view.startsWith('repo/');
+
+        if (!isDynamicCreateRepo && !isDynamicRepoRoute && view !== 'create-repo') {
             setActiveProjectId(undefined);
+            setActiveProjectBranch(undefined);
         }
 
         if (window.location.pathname !== url) {
@@ -389,10 +439,36 @@ const App: React.FC = () => {
 
         // Determine the actual view to set
         if (typeof view === 'string' && view.startsWith('create-repo/')) {
-            const projectId = view.split('/')[1];
+            const [routePart, queryString] = view.split('?');
+            const projectId = routePart.split('/')[1];
+            const nextBranch = queryString ? new URLSearchParams(queryString).get('branch') || undefined : undefined;
             if (projectId) {
                 setActiveProjectId(projectId);
+                setActiveProjectBranch(nextBranch);
                 setCurrentView('create-repo');
+            }
+        } else if (typeof view === 'string' && view.startsWith('repo/')) {
+            const [routePart, queryString] = view.split('?');
+            const parts = routePart.split('/');
+            const repoId = parts[1];
+            const nextBranch = queryString ? new URLSearchParams(queryString).get('branch') || undefined : undefined;
+            if (repoId) {
+                if (!Number.isNaN(Number(repoId)) && repoId.length < 10) {
+                    setActiveRepoId(Number(repoId));
+                    setActiveProjectId(undefined);
+                    setActiveProjectBranch(undefined);
+                } else {
+                    setActiveRepoId(undefined);
+                    setActiveProjectId(repoId);
+                    setActiveProjectBranch(nextBranch);
+                }
+            }
+            if (routePart.endsWith('/files')) {
+                setCurrentView('repo-files');
+            } else if (routePart.endsWith('/logs')) {
+                setCurrentView('repo-logs');
+            } else {
+                setCurrentView('repo');
             }
         } else if (typeof view === 'string' && view.includes('/logs')) {
             setCurrentView('repo-logs');
@@ -407,11 +483,15 @@ const App: React.FC = () => {
         if (typeof data.id === 'string') {
             setActiveRepoId(undefined);
             setActiveProjectId(data.id);
+            setActiveProjectBranch(data.selectedBranch || data.activeBranch || 'main');
         } else {
             setActiveProjectId(undefined);
+            setActiveProjectBranch(undefined);
             setActiveRepoId(data.id);
         }
-        const url = data.id ? `/repo/${data.id}` : '/trem-edit';
+        const url = typeof data.id === 'string'
+            ? buildBranchUrl(`/repo/${data.id}`, data.selectedBranch || data.activeBranch || 'main')
+            : (data.id ? `/repo/${data.id}` : '/trem-edit');
         window.history.pushState({}, '', url);
         setCurrentView('repo');
     };
@@ -436,7 +516,7 @@ const App: React.FC = () => {
             case 'repo-files':
                 return <RepoFilesView onNavigate={handleNavigate} repoData={repoData} />;
             case 'repo-logs':
-                return <ActivityLogsView />; // No props needed, uses store
+                return <ActivityLogsView repoData={repoData} onNavigate={handleNavigate} />;
             case 'settings':
                 return <SettingsView onNavigate={handleNavigate} />;
             default:

@@ -240,7 +240,10 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
 
             // 3. Start Ingestion
             setUploadStatus('Starting Cloudflare Workflow...');
-            const runMeta = await startIngestionMutation.mutateAsync(project.id);
+            const runMeta = await startIngestionMutation.mutateAsync({
+                projectId: project.id,
+                branchName: projectPayload?.selectedBranch || projectPayload?.activeBranch || 'main',
+            });
             setActiveRunMeta({
                 jobId: runMeta.jobId || null,
                 workflowId: runMeta.workflowId || null,

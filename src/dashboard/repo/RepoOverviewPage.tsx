@@ -7,6 +7,11 @@ import CommitDetailsView from './components/CommitDetails';
 import AlertDialog from '../../components/ui/AlertDialog';
 import { db } from '../../utils/db';
 import { apiClient } from '../../api-client';
+import {
+  useCreateProjectBranch,
+  useMergeProjectBranches,
+  useSwitchProjectBranch,
+} from '../../hooks/useQueries';
 
 export interface FileNode {
   id: string;
@@ -36,15 +41,23 @@ interface VideoRepoOverviewProps {
 const defaultFileSystem: FileNode[] = [];
 
 interface ActivityLogEntry {
-  id?: string;
-  agent: string;
-  message: string;
+    id?: string;
+    agent: string;
+    message: string;
   timestamp: number;
   hashtags?: string[];
   parent?: string | null;
   branch?: string;
   artifacts?: Record<string, any>;
 }
+
+const buildRepoBranchUrl = (repoId: string | number, suffix = '', branchName?: string | null) => {
+  const url = new URL(`/repo/${repoId}${suffix}`, window.location.origin);
+  if (branchName) {
+    url.searchParams.set('branch', branchName);
+  }
+  return `${url.pathname}${url.search}`;
+};
 
 const findFileByPath = (nodes: FileNode[], path: string): FileNode | null => {
   for (const node of nodes) {
@@ -68,6 +81,20 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
   const [isEditingBrief, setIsEditingBrief] = useState(false);
   const [editedBrief, setEditedBrief] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showCreateBranchDialog, setShowCreateBranchDialog] = useState(false);
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
+  const [newBranchName, setNewBranchName] = useState('');
+  const [mergeSourceBranch, setMergeSourceBranch] = useState('');
+  const [mergeMessage, setMergeMessage] = useState('');
+
+  const createBranchMutation = useCreateProjectBranch();
+  const switchBranchMutation = useSwitchProjectBranch();
+  const mergeBranchMutation = useMergeProjectBranches();
+  const backendProjectId = typeof repoData?.id === 'string' ? repoData.id : null;
+  const availableBranches = repoData?.branches || [];
+  const selectedBranch = repoData?.selectedBranch || repoData?.activeBranch || 'main';
+  const currentBranchCommits = repoData?.currentBranchCommits || repoData?.commits || [];
+  const currentBranchHead = repoData?.branchHeads?.[selectedBranch] || availableBranches.find((branch) => branch.name === selectedBranch)?.headCommitId || null;
 
   // Update filesystem to match the Repo data - checks for existing structure first
   useEffect(() => {
@@ -82,8 +109,8 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
         setSelectedId(repoData.fileSystem[0]?.id || '');
 
         // If repoData has commits property (from backend payload), use it directly
-        if (repoData.commits && repoData.commits.length > 0) {
-          setActivityLog(repoData.commits);
+        if (currentBranchCommits && currentBranchCommits.length > 0) {
+          setActivityLog(currentBranchCommits);
         } else {
           // Extract activity log from commits folder (Legacy/Local format)
           const commitsFolder = repoData.fileSystem.find((node: FileNode) => node.name === 'commits');
@@ -114,7 +141,7 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
         setFileSystem([]);
       }
     }
-  }, [repoData]);
+  }, [currentBranchCommits, repoData]);
 
   // Handler functions
   const handleEditBrief = () => {
@@ -169,10 +196,42 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
     }
   };
 
+  const handleBranchSwitch = async (branchName: string) => {
+    if (!backendProjectId || !onNavigate || branchName === selectedBranch) return;
+    await switchBranchMutation.mutateAsync({ projectId: backendProjectId, branchName });
+    onNavigate(buildRepoBranchUrl(backendProjectId, '', branchName));
+  };
+
+  const handleCreateBranch = async () => {
+    if (!backendProjectId || !newBranchName.trim()) return;
+    const created = await createBranchMutation.mutateAsync({
+      projectId: backendProjectId,
+      name: newBranchName.trim(),
+      sourceBranch: selectedBranch,
+    });
+    setShowCreateBranchDialog(false);
+    setNewBranchName('');
+    onNavigate?.(buildRepoBranchUrl(backendProjectId, '', created.branchName));
+  };
+
+  const handleMergeBranches = async () => {
+    if (!backendProjectId || !mergeSourceBranch || mergeSourceBranch === selectedBranch) return;
+    await mergeBranchMutation.mutateAsync({
+      projectId: backendProjectId,
+      sourceBranch: mergeSourceBranch,
+      targetBranch: selectedBranch,
+      message: mergeMessage.trim() || undefined,
+    });
+    setShowMergeDialog(false);
+    setMergeSourceBranch('');
+    setMergeMessage('');
+    onNavigate?.(buildRepoBranchUrl(backendProjectId, '', selectedBranch));
+  };
+
   const handleViewFullLogs = () => {
     // Navigate to activity logs page
     if (repoData?.id && onNavigate) {
-      onNavigate(`repo/${repoData.id}/logs`);
+      onNavigate(buildRepoBranchUrl(repoData.id, '/logs', selectedBranch).slice(1));
     }
   };
 
@@ -303,9 +362,9 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
   }, [repoData]);
 
   const latestTags = React.useMemo(() => {
-    const latestCommit = repoData?.commits?.[0];
+    const latestCommit = currentBranchCommits?.[0];
     return Array.isArray(latestCommit?.hashtags) ? latestCommit.hashtags : [];
-  }, [repoData, activityLog]);
+  }, [activityLog, currentBranchCommits]);
 
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-background-dark">
@@ -314,6 +373,89 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-6 md:p-10">
         <div className="max-w-6xl mx-auto space-y-6">
+          {backendProjectId && (
+            <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-border-dark dark:bg-surface-card/80">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                  <div className="text-[11px] font-mono uppercase tracking-[0.22em] text-slate-400 dark:text-gray-500">
+                    Branch Workspace
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <select
+                      value={selectedBranch}
+                      onChange={(event) => void handleBranchSwitch(event.target.value)}
+                      className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-mono text-slate-900 outline-none transition focus:border-primary dark:border-border-dark dark:bg-background-dark dark:text-white"
+                    >
+                      {availableBranches.map((branch) => (
+                        <option key={branch.name} value={branch.name}>
+                          {branch.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[11px] font-mono uppercase tracking-[0.18em] text-primary">
+                      Head {currentBranchHead || 'none'}
+                    </div>
+                    <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500 dark:border-border-dark dark:bg-background-dark dark:text-gray-400">
+                      {availableBranches.length} branch{availableBranches.length === 1 ? '' : 'es'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setShowCreateBranchDialog(true)}
+                    className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-primary/30 hover:text-slate-900 dark:border-border-dark dark:bg-background-dark dark:text-white"
+                  >
+                    New Branch
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMergeSourceBranch(
+                        availableBranches.find((branch) => branch.name !== selectedBranch)?.name || '',
+                      );
+                      setShowMergeDialog(true);
+                    }}
+                    className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition hover:bg-primary/15"
+                  >
+                    Merge Into {selectedBranch}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                {availableBranches.map((branch) => (
+                  <div
+                    key={branch.name}
+                    className={`rounded-2xl border px-4 py-4 transition ${
+                      branch.name === selectedBranch
+                        ? 'border-primary/20 bg-primary/10'
+                        : 'border-slate-200 bg-slate-50/80 dark:border-border-dark dark:bg-background-dark/70'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-slate-900 dark:text-white">{branch.name}</div>
+                      {branch.isActive && (
+                        <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.18em] text-primary">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-3 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
+                      Head
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-slate-600 dark:text-slate-300">
+                      {branch.headCommitId || 'No commits yet'}
+                    </div>
+                    <div className="mt-3 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
+                      Source
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-slate-500 dark:text-gray-400">
+                      {branch.sourceBranch || 'root'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.95fr)]">
 
             {/* Creative Brief Card */}
@@ -413,7 +555,7 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-slate-500 dark:text-zinc-500 font-mono">~/files/</span>
                   <button
-                    onClick={() => onNavigate && onNavigate('repo-files')}
+                    onClick={() => onNavigate && onNavigate(buildRepoBranchUrl(repoData?.id || '', '/files', selectedBranch).slice(1))}
                     className="text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-white transition-colors"
                     title="Maximize / Open File Manager"
                   >
@@ -472,11 +614,11 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
                       return (
                         <tr
                           key={idx}
-                          onClick={() => handleCommitClick(repoData?.commits?.[idx] || entry)}
+                          onClick={() => handleCommitClick(currentBranchCommits?.[idx] || entry)}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault();
-                              handleCommitClick(repoData?.commits?.[idx] || entry);
+                              handleCommitClick(currentBranchCommits?.[idx] || entry);
                             }
                           }}
                           tabIndex={0}
@@ -490,7 +632,12 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
                           </td>
                           <td className="px-6 py-4 text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
                             <div className="flex items-center justify-between gap-4">
-                              <span className="min-w-0 truncate">{entry.message}</span>
+                              <div className="flex min-w-0 items-center gap-3">
+                                <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.16em] text-primary">
+                                  {entry.branch || selectedBranch}
+                                </span>
+                                <span className="min-w-0 truncate">{entry.message}</span>
+                              </div>
                               <span className="material-icons-outlined text-sm text-slate-300 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-zinc-600">
                                 open_in_new
                               </span>
@@ -526,6 +673,105 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
           cancelText="Cancel"
           type="danger"
         />
+      )}
+
+      {showCreateBranchDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-border-dark dark:bg-surface-card">
+            <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-slate-400 dark:text-gray-500">Create Branch</div>
+            <h3 className="mt-3 text-xl font-display font-bold text-slate-900 dark:text-white">Cut a new branch from {selectedBranch}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">
+              Trem will copy the current repository artifacts into the new branch and keep a separate head from this point onward.
+            </p>
+            <input
+              autoFocus
+              value={newBranchName}
+              onChange={(event) => setNewBranchName(event.target.value)}
+              placeholder="feature/color-pass"
+              className="mt-5 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary dark:border-border-dark dark:bg-background-dark dark:text-white"
+            />
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCreateBranchDialog(false);
+                  setNewBranchName('');
+                }}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-500 transition hover:text-slate-900 dark:text-gray-400 dark:hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleCreateBranch()}
+                disabled={!newBranchName.trim() || createBranchMutation.isPending}
+                className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-black transition hover:bg-primary_hover disabled:opacity-50"
+              >
+                Create Branch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMergeDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-border-dark dark:bg-surface-card">
+            <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-slate-400 dark:text-gray-500">Merge Branches</div>
+            <h3 className="mt-3 text-xl font-display font-bold text-slate-900 dark:text-white">Merge into {selectedBranch}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-gray-400">
+              This creates a merge commit on {selectedBranch}, updates its head, and refreshes the visible repository tree with the merged artifacts.
+            </p>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Source Branch</label>
+                <select
+                  value={mergeSourceBranch}
+                  onChange={(event) => setMergeSourceBranch(event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary dark:border-border-dark dark:bg-background-dark dark:text-white"
+                >
+                  {availableBranches.filter((branch) => branch.name !== selectedBranch).map((branch) => (
+                    <option key={branch.name} value={branch.name}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Target Branch</label>
+                <div className="mt-2 rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm font-semibold text-primary">
+                  {selectedBranch}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4">
+              <label className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">Merge Message</label>
+              <input
+                value={mergeMessage}
+                onChange={(event) => setMergeMessage(event.target.value)}
+                placeholder={`merge: ${mergeSourceBranch || 'feature'} into ${selectedBranch}`}
+                className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary dark:border-border-dark dark:bg-background-dark dark:text-white"
+              />
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowMergeDialog(false);
+                  setMergeSourceBranch('');
+                  setMergeMessage('');
+                }}
+                className="rounded-xl px-4 py-2 text-sm font-medium text-slate-500 transition hover:text-slate-900 dark:text-gray-400 dark:hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleMergeBranches()}
+                disabled={!mergeSourceBranch || mergeBranchMutation.isPending}
+                className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-black transition hover:bg-primary_hover disabled:opacity-50"
+              >
+                Merge Branch
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {selectedCommit && (

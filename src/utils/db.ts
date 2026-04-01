@@ -8,6 +8,18 @@ export interface RepoData {
     assets: any[];
     fileSystem: any[];
     commits?: any[];
+    currentBranchCommits?: any[];
+    branches?: Array<{
+        name: string;
+        headCommitId: string | null;
+        sourceBranch: string | null;
+        createdAt: number;
+        updatedAt: number;
+        isActive: boolean;
+    }>;
+    branchHeads?: Record<string, string | null>;
+    activeBranch?: string;
+    selectedBranch?: string;
     status?: string;
     created: number;
 }

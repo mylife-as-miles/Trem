@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import TopNavigation from '../../components/layout/TopNavigation';
 import { RepoData, db } from '../../utils/db'; // Added db import
-import { useUpdateRepo } from '../../hooks/useQueries';
+import { useSwitchProjectBranch, useUpdateRepo } from '../../hooks/useQueries';
 import AlertDialog from '../../components/ui/AlertDialog';
 // import { analyzeAsset, generateRepoStructure } from '../../services/gemini/repo/index';
 // import { transcribeAudio } from '../../services/whisperService';
 
 interface RepoFilesViewProps {
-    onNavigate: (view: 'dashboard' | 'repo' | 'timeline' | 'diff' | 'assets' | 'settings' | 'create-repo' | 'repo-files') => void;
+    onNavigate: (view: string) => void;
     repoData?: RepoData | null;
 }
 
@@ -32,8 +32,20 @@ const IMAGE_FILE_PATTERN = /\.(jpg|jpeg|png|gif|webp)$/i;
 const AUDIO_FILE_PATTERN = /\.(mp3|wav|m4a|aac|ogg)$/i;
 const TEXT_FILE_PATTERN = /\.(json|md|srt|txt|ya?ml)$/i;
 
+const buildRepoBranchUrl = (repoId: string | number, suffix = '', branchName?: string | null) => {
+    const url = new URL(`/repo/${repoId}${suffix}`, window.location.origin);
+    if (branchName) {
+        url.searchParams.set('branch', branchName);
+    }
+    return `${url.pathname}${url.search}`;
+};
+
 const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) => {
     const isBackendRepo = typeof repoData?.id === 'string';
+    const backendProjectId = typeof repoData?.id === 'string' ? repoData.id : null;
+    const availableBranches = repoData?.branches || [];
+    const selectedBranch = repoData?.selectedBranch || repoData?.activeBranch || 'main';
+    const currentBranchHead = repoData?.branchHeads?.[selectedBranch] || availableBranches.find((branch) => branch.name === selectedBranch)?.headCommitId || null;
     const [files, setFiles] = useState<FileNode[]>([]);
     const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
     const [editorContent, setEditorContent] = useState('');
@@ -55,6 +67,7 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
 
     // Queries
     const updateRepoMutation = useUpdateRepo();
+    const switchBranchMutation = useSwitchProjectBranch();
 
     // Initialize files from repoData
     useEffect(() => {
@@ -203,6 +216,12 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
         if (selectedFile && !isBackendRepo) {
             setDeleteDialogOpen(true);
         }
+    };
+
+    const handleBranchSwitch = async (branchName: string) => {
+        if (!backendProjectId || branchName === selectedBranch) return;
+        await switchBranchMutation.mutateAsync({ projectId: backendProjectId, branchName });
+        onNavigate(buildRepoBranchUrl(backendProjectId, '/files', branchName).slice(1));
     };
 
     const handleCreateItem = async (type: 'folder' | 'file') => {
@@ -406,7 +425,10 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
             {/* Toolbar */}
             <div className="h-14 px-4 flex items-center justify-between bg-white/80 dark:bg-[#09090b]/80 backdrop-blur-md border-b border-slate-200 dark:border-white/5 sticky top-0 z-30 transition-colors duration-300">
                 <div className="flex items-center gap-4">
-                    <button onClick={() => onNavigate('repo')} className="flex items-center gap-2 text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white transition-colors group">
+                    <button
+                        onClick={() => onNavigate(repoData?.id ? buildRepoBranchUrl(repoData.id, '', selectedBranch).slice(1) : 'repo')}
+                        className="flex items-center gap-2 text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white transition-colors group"
+                    >
                         <span className="material-icons-outlined group-hover:-translate-x-0.5 transition-transform text-lg">arrow_back</span>
                         <span className="text-xs font-mono font-medium tracking-wider uppercase">Back</span>
                     </button>
@@ -418,6 +440,30 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {backendProjectId && (
+                        <>
+                            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 dark:border-white/10 dark:bg-white/5">
+                                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-400 dark:text-zinc-500">
+                                    Branch
+                                </span>
+                                <select
+                                    value={selectedBranch}
+                                    onChange={(event) => void handleBranchSwitch(event.target.value)}
+                                    className="bg-transparent text-xs font-mono font-semibold uppercase tracking-[0.16em] text-slate-700 outline-none dark:text-white"
+                                >
+                                    {availableBranches.map((branch) => (
+                                        <option key={branch.name} value={branch.name}>
+                                            {branch.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="hidden rounded-lg border border-primary/20 bg-primary/10 px-3 py-1.5 text-[10px] font-mono uppercase tracking-[0.2em] text-primary xl:block">
+                                Head {currentBranchHead || 'none'}
+                            </div>
+                        </>
+                    )}
+
                     {/* New Actions Group */}
                     <div className="flex items-center bg-slate-100 dark:bg-white/5 rounded-lg p-0.5 border border-slate-200 dark:border-white/5">
                         <button onClick={() => fileInputRef.current?.click()} disabled={isBackendRepo} className="p-1.5 hover:bg-white dark:hover:bg-white/10 rounded-md transition-all text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white relative group disabled:opacity-30 disabled:cursor-not-allowed" title={isBackendRepo ? "Cloudflare repo files are read-only" : "Upload Media"}>
@@ -467,7 +513,9 @@ const RepoFilesView: React.FC<RepoFilesViewProps> = ({ onNavigate, repoData }) =
                             renderTree(files)
                         ) : (
                             <div className="px-4 py-6 text-xs font-mono text-slate-400 dark:text-zinc-600">
-                                No repository files generated yet.
+                                {isBackendRepo
+                                    ? `No repository files found on ${selectedBranch}.`
+                                    : 'No repository files generated yet.'}
                             </div>
                         )}
                     </div>

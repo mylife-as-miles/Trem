@@ -8,7 +8,8 @@ export const queryKeys = {
     repo: (id: number) => ['repos', id] as const,
     assets: (repoId: number) => ['repos', repoId, 'assets'] as const,
     cfProjects: ['cfProjects'] as const,
-    cfProjectPayload: (id: string) => ['cfProjectPayload', id] as const,
+    cfProjectPayload: (id: string, branchName?: string | null) => ['cfProjectPayload', id, branchName || 'default'] as const,
+    cfProjectBranches: (id: string) => ['cfProjectBranches', id] as const,
 };
 
 // --- Repositories (Legacy SQLite/IndexedDB) ---
@@ -87,12 +88,12 @@ export const useProjects = () => {
     });
 };
 
-export const useProjectPayload = (id: string | undefined) => {
+export const useProjectPayload = (id: string | undefined, branchName?: string | null) => {
     return useQuery({
-        queryKey: queryKeys.cfProjectPayload(id!),
+        queryKey: queryKeys.cfProjectPayload(id!, branchName),
         queryFn: async () => {
             if (!id) return null;
-            return await apiClient.getProjectPayload(id);
+            return await apiClient.getProjectPayload(id, branchName);
         },
         enabled: !!id,
         refetchIntervalInBackground: true,
@@ -126,11 +127,62 @@ export const useCreateCFProject = () => {
 export const useStartIngestion = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async (projectId: string) => {
-            return await apiClient.startIngestion(projectId);
+        mutationFn: async ({ projectId, branchName }: { projectId: string; branchName?: string | null }) => {
+            return await apiClient.startIngestion(projectId, branchName);
         },
-        onSuccess: (_, projectId) => {
-            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectPayload(projectId) });
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectPayload(variables.projectId, variables.branchName) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectBranches(variables.projectId) });
+        },
+    });
+};
+
+export const useProjectBranches = (id: string | undefined) => {
+    return useQuery({
+        queryKey: queryKeys.cfProjectBranches(id!),
+        queryFn: async () => {
+            if (!id) return null;
+            return await apiClient.getBranches(id);
+        },
+        enabled: !!id,
+    });
+};
+
+export const useCreateProjectBranch = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ projectId, name, sourceBranch }: { projectId: string; name: string; sourceBranch?: string }) => {
+            return await apiClient.createBranch(projectId, name, sourceBranch);
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectBranches(variables.projectId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectPayload(variables.projectId) });
+        },
+    });
+};
+
+export const useSwitchProjectBranch = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ projectId, branchName }: { projectId: string; branchName: string }) => {
+            return await apiClient.switchBranch(projectId, branchName);
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectBranches(variables.projectId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectPayload(variables.projectId) });
+        },
+    });
+};
+
+export const useMergeProjectBranches = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ projectId, sourceBranch, targetBranch, message }: { projectId: string; sourceBranch: string; targetBranch: string; message?: string }) => {
+            return await apiClient.mergeBranches(projectId, sourceBranch, targetBranch, message);
+        },
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectBranches(variables.projectId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.cfProjectPayload(variables.projectId) });
         },
     });
 };

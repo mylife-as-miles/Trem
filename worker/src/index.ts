@@ -1,5 +1,24 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import {
+  buildBranchArtifactStorageKey,
+  cloneBranchArtifacts,
+  createMergeCommitRecord,
+  ensureBranchExists,
+  ensureBranchSchema,
+  ensureProjectBranches,
+  filterCommitsForBranch,
+  getBranchHead,
+  getBranchHeads,
+  getNextCommitId,
+  getProjectActiveBranch,
+  getProjectCommits,
+  listProjectBranches,
+  sanitizeBranchName,
+  setProjectActiveBranch,
+  updateBranchHead,
+  type CommitSummary,
+} from './db/branching';
 
 export { ProjectCoordinatorDO } from './durable-objects/project-coordinator';
 export { IngestionWorkflow } from './workflows/ingestion-workflow';
@@ -29,23 +48,12 @@ type ExistingJob = {
   id: string;
   status: string;
   workflow_id: string | null;
+  branch_name?: string | null;
 };
 
 type QueueAssetPreview = {
   id: string;
   name: string;
-};
-
-type CommitSummary = {
-  id: string;
-  parent: string | null;
-  message: string;
-  author: string;
-  timestamp: string | number;
-  branch: string;
-  hashtags: string[];
-  artifacts?: Record<string, unknown>;
-  state?: Record<string, unknown>;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -83,8 +91,6 @@ app.use('*', cors());
 
 const ACTIVE_WORKFLOW_STATUSES = new Set<WorkflowInstanceStatus>(['queued', 'running', 'paused', 'waiting']);
 const ACTIVE_COORDINATOR_STATUSES = new Set(['queued', 'running', 'transcribing', 'analyzing']);
-const COMMIT_ARTIFACT_PATTERN = /^commits\/(\d{4})\.json$/;
-
 const createQueuedAgentStates = (assets: QueueAssetPreview[]) =>
   Array.from({ length: 4 }, (_, index) => {
     const asset = assets[index];
@@ -96,57 +102,6 @@ const createQueuedAgentStates = (assets: QueueAssetPreview[]) =>
       completedCount: 0,
     };
   });
-
-const isCommitArtifact = (name: string) => COMMIT_ARTIFACT_PATTERN.test(name);
-
-const normalizeCommitSequence = (name: string) => {
-  const normalized = name.replace(/\\/g, '/');
-  const match = normalized.match(COMMIT_ARTIFACT_PATTERN);
-  return match ? Number(match[1]) : 0;
-};
-
-const getProjectCommits = async (env: Env, projectId: string): Promise<CommitSummary[]> => {
-  const { results } = await env.DB.prepare(
-    "SELECT name, storage_key FROM artifacts WHERE project_id = ? AND name GLOB 'commits/[0-9][0-9][0-9][0-9].json' ORDER BY name DESC"
-  ).bind(projectId).all<{ name: string; storage_key: string }>();
-
-  const commits = await Promise.all(
-    results.map(async (artifact): Promise<CommitSummary | null> => {
-      const object = await env.BUCKET.get(artifact.storage_key);
-      if (!object) return null;
-
-      try {
-        const parsed = await object.json<any>();
-        const fallbackId = artifact.name.split('/').pop()?.replace('.json', '') || artifact.name;
-        return {
-          id: typeof parsed?.id === 'string' ? parsed.id : fallbackId,
-          parent: typeof parsed?.parent === 'string' ? parsed.parent : null,
-          message: typeof parsed?.message === 'string' ? parsed.message : 'feat: update repository analysis',
-          author: typeof parsed?.author === 'string' ? parsed.author : 'Trem-AI',
-          timestamp: parsed?.timestamp || Date.now(),
-          branch: typeof parsed?.branch === 'string' ? parsed.branch : 'main',
-          hashtags: Array.isArray(parsed?.hashtags) ? parsed.hashtags.map((tag: unknown) => String(tag)) : [],
-          artifacts: parsed?.artifacts ?? parsed?.state,
-          state: parsed?.state,
-        } satisfies CommitSummary;
-      } catch (error) {
-        return null;
-      }
-    })
-  );
-
-  const validCommits = commits.filter((commit): commit is CommitSummary => commit !== null);
-
-  return validCommits
-    .sort((a, b) => {
-      const aTime = new Date(a.timestamp).getTime();
-      const bTime = new Date(b.timestamp).getTime();
-      if (!Number.isNaN(aTime) && !Number.isNaN(bTime) && aTime !== bTime) {
-        return bTime - aTime;
-      }
-      return normalizeCommitSequence(b.id) - normalizeCommitSequence(a.id);
-    });
-};
 
 const buildObjectResponse = async (
   env: Env,
@@ -168,6 +123,108 @@ const buildObjectResponse = async (
   }
 
   return new Response(object.body, { headers });
+};
+
+const readRequestedBranch = (request: Request) => {
+  const url = new URL(request.url);
+  const branch = url.searchParams.get('branch');
+  return branch ? sanitizeBranchName(branch) : null;
+};
+
+const resolveSelectedBranch = async (
+  env: Env,
+  projectId: string,
+  request: Request,
+) => {
+  await ensureProjectBranches(env, projectId);
+  const requestedBranch = readRequestedBranch(request);
+  if (requestedBranch) {
+    const existingBranch = await env.DB.prepare(
+      "SELECT name FROM branches WHERE project_id = ? AND name = ?"
+    ).bind(projectId, requestedBranch).first<{ name: string }>();
+    if (existingBranch?.name) {
+      return requestedBranch;
+    }
+  }
+
+  return getProjectActiveBranch(env, projectId);
+};
+
+const buildProjectPayload = async (
+  env: Env,
+  projectId: string,
+  request: Request,
+) => {
+  await ensureBranchSchema(env);
+  const selectedBranch = await resolveSelectedBranch(env, projectId, request);
+  const project = await env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(projectId).first();
+
+  if (!project) {
+    return null;
+  }
+
+  const assets = await env.DB.prepare("SELECT * FROM assets WHERE project_id = ? ORDER BY created_at ASC").bind(projectId).all();
+  const jobs = await env.DB.prepare(
+    "SELECT * FROM jobs WHERE project_id = ? AND branch_name = ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(projectId, selectedBranch).all();
+  const logs = await env.DB.prepare(
+    "SELECT * FROM event_logs WHERE project_id = ? AND branch_name = ? ORDER BY created_at ASC"
+  ).bind(projectId, selectedBranch).all();
+  const artifacts = await env.DB.prepare(
+    "SELECT name, size, content_type FROM artifacts WHERE project_id = ? AND branch_name = ? ORDER BY name ASC"
+  ).bind(projectId, selectedBranch).all();
+  const commits = await getProjectCommits(env, projectId);
+  const branches = await listProjectBranches(env, projectId);
+  const branchHeads = await getBranchHeads(env, projectId);
+  const currentBranchCommits = filterCommitsForBranch(commits, branchHeads[selectedBranch] ?? null);
+  const doStatus = await getCoordinatorStatus(env, projectId);
+
+  return {
+    project,
+    assets: assets.results,
+    activeJob: jobs.results[0] || null,
+    artifacts: artifacts.results,
+    commits,
+    currentBranchCommits,
+    logs: logs.results,
+    branches,
+    activeBranch: await getProjectActiveBranch(env, projectId),
+    selectedBranch,
+    branchHeads,
+    liveProgress: doStatus.progress,
+    liveStatus: doStatus.jobStatus,
+    liveMessage: doStatus.message,
+    liveAgents: doStatus.agents || [],
+  };
+};
+
+const storeBranchArtifact = async (
+  env: Env,
+  projectId: string,
+  branchName: string,
+  jobId: string | null,
+  name: string,
+  data: unknown,
+) => {
+  const content = JSON.stringify(data, null, 2);
+  const storageKey = buildBranchArtifactStorageKey(projectId, branchName, name);
+
+  await env.BUCKET.put(storageKey, content, {
+    httpMetadata: { contentType: 'application/json' },
+  });
+
+  await env.DB.prepare(
+    "INSERT INTO artifacts (id, project_id, job_id, branch_name, name, storage_key, content_type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    crypto.randomUUID(),
+    projectId,
+    jobId,
+    branchName,
+    name,
+    storageKey,
+    'application/json',
+    content.length,
+  ).run();
 };
 
 const getCoordinatorStub = (env: Env, projectId: string) => {
@@ -284,19 +341,23 @@ const recoverStaleJobIfNeeded = async (env: Env, projectId: string, job: Existin
 // --- Project Routes ---
 
 app.post('/api/projects', async (c) => {
+  await ensureBranchSchema(c.env);
   const { name, brief } = await c.req.json();
   const id = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
   await c.env.DB.prepare(
-    "INSERT INTO projects (id, name, brief, updated_at) VALUES (?, ?, ?, ?)"
-  ).bind(id, name, brief || '', now).run();
+    "INSERT INTO projects (id, name, brief, active_branch, updated_at) VALUES (?, ?, ?, ?, ?)"
+  ).bind(id, name, brief || '', 'main', now).run();
+
+  await ensureProjectBranches(c.env, id);
 
   const project = await c.env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first();
   return c.json(project);
 });
 
 app.patch('/api/projects/:id', async (c) => {
+  await ensureBranchSchema(c.env);
   const id = c.req.param('id');
   const { name, brief } = await c.req.json();
   const now = Math.floor(Date.now() / 1000);
@@ -309,6 +370,7 @@ app.patch('/api/projects/:id', async (c) => {
 });
 
 app.get('/api/projects', async (c) => {
+  await ensureBranchSchema(c.env);
   const { results } = await c.env.DB.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
   return c.json(results);
 });
@@ -345,6 +407,7 @@ app.on('DELETE', '/api/projects/:id', async (c) => {
     c.env.DB.prepare("DELETE FROM jobs WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM event_logs WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM artifacts WHERE project_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM branches WHERE project_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
   ]);
 
@@ -356,58 +419,107 @@ app.on('DELETE', '/api/projects/:id', async (c) => {
 
 app.get('/api/projects/:id', async (c) => {
   const id = c.req.param('id');
-  const project = await c.env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first();
-
-  if (!project) return c.json({ error: 'Not found' }, 404);
-
-  const assets = await c.env.DB.prepare("SELECT * FROM assets WHERE project_id = ?").bind(id).all();
-  const jobs = await c.env.DB.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").bind(id).all();
-  const logs = await c.env.DB.prepare("SELECT * FROM event_logs WHERE project_id = ? ORDER BY created_at DESC LIMIT 50").bind(id).all();
-  const commits = await getProjectCommits(c.env, id);
-
-  // Get live status from DO
-  const doStatus = await getCoordinatorStatus(c.env, id);
-
-  return c.json({
-    project,
-    assets: assets.results,
-    activeJob: jobs.results[0] || null,
-    commits,
-    logs: logs.results,
-    liveProgress: doStatus.progress,
-    liveStatus: doStatus.jobStatus,
-    liveMessage: doStatus.message,
-    liveAgents: doStatus.agents || []
-  });
+  const payload = await buildProjectPayload(c.env, id, c.req.raw);
+  if (!payload) return c.json({ error: 'Not found' }, 404);
+  return c.json(payload);
 });
 
 app.get('/api/projects/:id/payload', async (c) => {
   const id = c.req.param('id');
-  const project = await c.env.DB.prepare("SELECT * FROM projects WHERE id = ?").bind(id).first();
+  const payload = await buildProjectPayload(c.env, id, c.req.raw);
+  if (!payload) return c.json({ error: 'Not found' }, 404);
+  return c.json(payload);
+});
 
+app.get('/api/projects/:id/branches', async (c) => {
+  const id = c.req.param('id');
+  const project = await c.env.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(id).first();
   if (!project) return c.json({ error: 'Not found' }, 404);
 
-  const assets = await c.env.DB.prepare("SELECT * FROM assets WHERE project_id = ?").bind(id).all();
-  const jobs = await c.env.DB.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 1").bind(id).all();
-  const logs = await c.env.DB.prepare("SELECT * FROM event_logs WHERE project_id = ? ORDER BY created_at ASC").bind(id).all();
-  const artifacts = await c.env.DB.prepare("SELECT name, size, content_type FROM artifacts WHERE project_id = ?").bind(id).all();
-  const commits = await getProjectCommits(c.env, id);
+  const branches = await listProjectBranches(c.env, id);
+  const activeBranch = await getProjectActiveBranch(c.env, id);
+  const branchHeads = await getBranchHeads(c.env, id);
 
-  // Get live status from DO
-  const doStatus = await getCoordinatorStatus(c.env, id);
+  return c.json({ activeBranch, branches, branchHeads });
+});
 
-  return c.json({
-    project,
-    assets: assets.results,
-    activeJob: jobs.results[0] || null,
-    artifacts: artifacts.results,
-    commits,
-    logs: logs.results,
-    liveProgress: doStatus.progress,
-    liveStatus: doStatus.jobStatus,
-    liveMessage: doStatus.message,
-    liveAgents: doStatus.agents || []
+app.post('/api/projects/:id/branches', async (c) => {
+  const id = c.req.param('id');
+  const { name, sourceBranch } = await c.req.json<{ name: string; sourceBranch?: string }>();
+  const project = await c.env.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(id).first();
+  if (!project) return c.json({ error: 'Not found' }, 404);
+
+  const baseBranch = sourceBranch
+    ? sanitizeBranchName(sourceBranch)
+    : await getProjectActiveBranch(c.env, id);
+  const branchName = await ensureBranchExists(c.env, id, name, baseBranch);
+
+  const branches = await listProjectBranches(c.env, id);
+  return c.json({ success: true, branchName, sourceBranch: baseBranch, branches });
+});
+
+app.post('/api/projects/:id/branches/switch', async (c) => {
+  const id = c.req.param('id');
+  const { branchName } = await c.req.json<{ branchName: string }>();
+  const project = await c.env.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(id).first();
+  if (!project) return c.json({ error: 'Not found' }, 404);
+
+  const normalizedBranch = await ensureBranchExists(
+    c.env,
+    id,
+    branchName,
+    await getProjectActiveBranch(c.env, id),
+  );
+  await setProjectActiveBranch(c.env, id, normalizedBranch);
+
+  const payload = await buildProjectPayload(c.env, id, new Request(`${c.req.url}?branch=${encodeURIComponent(normalizedBranch)}`));
+  return c.json(payload);
+});
+
+app.post('/api/projects/:id/branches/merge', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ sourceBranch: string; targetBranch: string; message?: string }>();
+  const project = await c.env.DB.prepare("SELECT id FROM projects WHERE id = ?").bind(id).first();
+  if (!project) return c.json({ error: 'Not found' }, 404);
+
+  const sourceBranch = sanitizeBranchName(body.sourceBranch);
+  const targetBranch = sanitizeBranchName(body.targetBranch);
+  if (sourceBranch === targetBranch) {
+    return c.json({ error: 'Source and target branches must differ' }, 400);
+  }
+
+  await ensureBranchExists(c.env, id, sourceBranch, 'main');
+  await ensureBranchExists(c.env, id, targetBranch, 'main');
+  await cloneBranchArtifacts(c.env, id, sourceBranch, targetBranch, { overwrite: true });
+
+  const nextCommitId = await getNextCommitId(c.env, id);
+  const sourceHead = await getBranchHead(c.env, id, sourceBranch);
+  const targetHead = await getBranchHead(c.env, id, targetBranch);
+  const mergeMessage = body.message?.trim() || `merge: ${sourceBranch} into ${targetBranch}`;
+  const commitRecord = createMergeCommitRecord({
+    commitId: nextCommitId,
+    targetBranch,
+    targetHead,
+    sourceHead,
+    message: mergeMessage,
   });
+
+  await storeBranchArtifact(c.env, id, targetBranch, null, `commits/${nextCommitId}.json`, commitRecord);
+  await updateBranchHead(c.env, id, targetBranch, nextCommitId);
+  await setProjectActiveBranch(c.env, id, targetBranch);
+
+  await c.env.DB.prepare(
+    "INSERT INTO event_logs (id, project_id, job_id, branch_name, message, level) VALUES (?, ?, ?, ?, ?, 'info')"
+  ).bind(
+    crypto.randomUUID(),
+    id,
+    null,
+    targetBranch,
+    `Merged ${sourceBranch} into ${targetBranch} with commit ${nextCommitId}.`,
+  ).run();
+
+  const payload = await buildProjectPayload(c.env, id, new Request(`${c.req.url}?branch=${encodeURIComponent(targetBranch)}`));
+  return c.json(payload);
 });
 
 // --- Asset / Upload Routes ---
@@ -486,14 +598,15 @@ app.get('/api/assets/:id/content', async (c) => {
 app.get('/api/projects/:projectId/artifact', async (c) => {
   const projectId = c.req.param('projectId');
   const name = c.req.query('name');
+  const branchName = await resolveSelectedBranch(c.env, projectId, c.req.raw);
 
   if (!name) {
     return c.json({ error: 'Artifact name is required' }, 400);
   }
 
   const artifact = await c.env.DB.prepare(
-    "SELECT storage_key, content_type FROM artifacts WHERE project_id = ? AND name = ?"
-  ).bind(projectId, name).first<{ storage_key: string; content_type: string | null }>();
+    "SELECT storage_key, content_type FROM artifacts WHERE project_id = ? AND branch_name = ? AND name = ?"
+  ).bind(projectId, branchName, name).first<{ storage_key: string; content_type: string | null }>();
 
   if (!artifact?.storage_key) {
     return c.json({ error: 'Artifact not found' }, 404);
@@ -510,10 +623,11 @@ app.get('/api/projects/:projectId/artifact', async (c) => {
 app.get('/api/projects/:projectId/artifacts/:name', async (c) => {
   const projectId = c.req.param('projectId');
   const name = c.req.param('name');
+  const branchName = await resolveSelectedBranch(c.env, projectId, c.req.raw);
 
   const artifact = await c.env.DB.prepare(
-    "SELECT storage_key, content_type FROM artifacts WHERE project_id = ? AND name = ?"
-  ).bind(projectId, name).first<{ storage_key: string; content_type: string | null }>();
+    "SELECT storage_key, content_type FROM artifacts WHERE project_id = ? AND branch_name = ? AND name = ?"
+  ).bind(projectId, branchName, name).first<{ storage_key: string; content_type: string | null }>();
 
   if (!artifact?.storage_key) {
     return c.json({ error: 'Artifact not found' }, 404);
@@ -532,6 +646,13 @@ app.get('/api/projects/:projectId/artifacts/:name', async (c) => {
 app.post('/api/projects/:projectId/ingest', async (c) => {
   const projectId = c.req.param('projectId');
   const now = Math.floor(Date.now() / 1000);
+  const body: { branchName?: string } = await c.req.json<{ branchName?: string }>().catch(() => ({} as { branchName?: string }));
+  const branchName = await ensureBranchExists(
+    c.env,
+    projectId,
+    body.branchName || await getProjectActiveBranch(c.env, projectId),
+    await getProjectActiveBranch(c.env, projectId),
+  );
 
   const assets = await c.env.DB.prepare(
     "SELECT id, name FROM assets WHERE project_id = ? ORDER BY created_at ASC"
@@ -543,7 +664,7 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
 
   // Check D1 for any active or queued jobs for this project
   const existingJob = await c.env.DB.prepare(
-    "SELECT id, status, workflow_id FROM jobs WHERE project_id = ? AND status IN ('queued', 'running')"
+    "SELECT id, status, workflow_id, branch_name FROM jobs WHERE project_id = ? AND status IN ('queued', 'running')"
   ).bind(projectId).first<ExistingJob>();
 
   if (existingJob) {
@@ -576,28 +697,28 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
 
   // Create Job in D1
   await c.env.DB.prepare(
-    "INSERT INTO jobs (id, project_id, status) VALUES (?, ?, 'queued')"
-  ).bind(jobId, projectId).run();
+    "INSERT INTO jobs (id, project_id, branch_name, status) VALUES (?, ?, ?, 'queued')"
+  ).bind(jobId, projectId, branchName).run();
 
   await c.env.DB.prepare(
-    "UPDATE projects SET status = 'queued', updated_at = ? WHERE id = ?"
-  ).bind(now, projectId).run();
+    "UPDATE projects SET status = 'queued', active_branch = ?, updated_at = ? WHERE id = ?"
+  ).bind(branchName, now, projectId).run();
 
   await c.env.DB.batch([
     c.env.DB.prepare(
-      "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
-    ).bind(crypto.randomUUID(), projectId, jobId, 'Backend accepted the ingest request.'),
+      "INSERT INTO event_logs (id, project_id, job_id, branch_name, message, level) VALUES (?, ?, ?, ?, ?, 'info')"
+    ).bind(crypto.randomUUID(), projectId, jobId, branchName, 'Backend accepted the ingest request.'),
     c.env.DB.prepare(
-      "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
-    ).bind(crypto.randomUUID(), projectId, jobId, initialQueueMessage),
+      "INSERT INTO event_logs (id, project_id, job_id, branch_name, message, level) VALUES (?, ?, ?, ?, ?, 'info')"
+    ).bind(crypto.randomUUID(), projectId, jobId, branchName, initialQueueMessage),
     c.env.DB.prepare(
-      "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
-    ).bind(crypto.randomUUID(), projectId, jobId, 'Polling Cloudflare workflow steps every second until the first worker update lands.'),
+      "INSERT INTO event_logs (id, project_id, job_id, branch_name, message, level) VALUES (?, ?, ?, ?, ?, 'info')"
+    ).bind(crypto.randomUUID(), projectId, jobId, branchName, 'Polling Cloudflare workflow steps every second until the first worker update lands.'),
   ]);
 
   // Start Workflow
   const instance = await c.env.INGESTION_WORKFLOW.create({
-    params: { projectId, jobId }
+    params: { projectId, jobId, branchName }
   });
 
   await c.env.DB.prepare(
@@ -615,15 +736,16 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
   }));
 
   await c.env.DB.prepare(
-    "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, 'info')"
+    "INSERT INTO event_logs (id, project_id, job_id, branch_name, message, level) VALUES (?, ?, ?, ?, ?, 'info')"
   ).bind(
     crypto.randomUUID(),
     projectId,
     jobId,
+    branchName,
     `Cloudflare workflow instance ${instance.id.slice(0, 8)} created successfully.`
   ).run();
 
-  return c.json({ jobId, workflowId: instance.id });
+  return c.json({ jobId, workflowId: instance.id, branchName });
 });
 
 // --- WebSocket for Live Updates ---

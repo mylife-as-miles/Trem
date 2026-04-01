@@ -2,6 +2,13 @@
 import { WorkflowEntrypoint, WorkflowEvent, WorkflowStep } from 'cloudflare:workers';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import mime from 'mime';
+import {
+  buildBranchArtifactStorageKey,
+  clearGeneratedArtifactsForBranch,
+  ensureBranchExists,
+  getCommitLineage,
+  updateBranchHead,
+} from '../db/branching';
 
 type Env = {
   DB: D1Database;
@@ -14,6 +21,7 @@ type Env = {
 type IngestionParams = {
   projectId: string;
   jobId: string;
+  branchName?: string;
 };
 
 type AssetRow = {
@@ -46,7 +54,10 @@ type TranscriptionResult = {
 type CommitArtifact = {
   id: string;
   parent: string | null;
+  parents: string[];
   timestamp: string;
+  author: string;
+  branch: string;
   message: string;
   hashtags: string[];
   state: Record<string, string | string[] | null>;
@@ -55,7 +66,6 @@ type CommitArtifact = {
 const REPLICATE_WHISPER_VERSION = '8099696689d249cf8b122d833c36ac3f75505c666a395ca40ef26f68e7d3d16e';
 const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024; // 25MB for Replicate
 const MAX_INGEST_AGENTS = 4;
-const COMMIT_ARTIFACT_PATTERN = /^commits\/(\d{4})\.json$/;
 
 type AgentState = {
   slot: number;
@@ -73,11 +83,6 @@ const createAgentStates = (activeAssetCount: number): AgentState[] =>
     assetName: null,
     completedCount: 0,
   }));
-
-const parseCommitSequence = (name: string) => {
-  const match = name.match(COMMIT_ARTIFACT_PATTERN);
-  return match ? Number(match[1]) : null;
-};
 
 const toRepoSlug = (value: string) =>
   value
@@ -138,12 +143,14 @@ const buildFallbackSynthesis = ({
   processedAssets,
   commitId,
   parentCommitId,
+  branchName,
 }: {
   projectId: string;
   repoName: string;
   processedAssets: Array<{ id: string; name: string; type: string; metadata: AssetMetadata }>;
   commitId: string;
   parentCommitId: string | null;
+  branchName: string;
 }) => ({
   provenance: {
     model: 'trem-fallback',
@@ -174,8 +181,15 @@ const buildFallbackSynthesis = ({
   commit: {
     id: commitId,
     parent: parentCommitId,
+    parents: parentCommitId ? [parentCommitId] : [],
+    author: 'Trem-AI',
+    branch: branchName,
     timestamp: new Date().toISOString(),
     message: defaultCommitMessage({ isInitial: !parentCommitId, repoName }),
+    hashtags: ['#trem', '#ai-generated'],
+    state: buildCommitState(
+      processedAssets.some((asset) => Boolean(asset.metadata.srt)),
+    ),
   },
 });
 
@@ -185,19 +199,29 @@ const normalizeRepoSynthesis = ({
   repoName,
   commitId,
   parentCommitId,
+  branchName,
 }: {
   synthesis: any;
   projectId: string;
   repoName: string;
   commitId: string;
   parentCommitId: string | null;
+  branchName: string;
 }) => {
   const timestamp = new Date().toISOString();
   const captions = typeof synthesis?.captions_srt === 'string' ? synthesis.captions_srt : '';
+  const parents = Array.isArray(synthesis?.commit?.parents)
+    ? synthesis.commit.parents.map((parent: unknown) => String(parent)).filter(Boolean)
+    : parentCommitId
+      ? [parentCommitId]
+      : [];
   const commit: CommitArtifact = {
     id: commitId,
     parent: parentCommitId,
+    parents,
     timestamp,
+    author: typeof synthesis?.commit?.author === 'string' ? synthesis.commit.author : 'Trem-AI',
+    branch: branchName,
     message: normalizeCommitMessage(
       synthesis?.commit?.message,
       defaultCommitMessage({ isInitial: !parentCommitId, repoName }),
@@ -240,43 +264,15 @@ const normalizeRepoSynthesis = ({
   };
 };
 
-const getCommitLineage = async (env: Env, projectId: string) => {
-  const { results } = await env.DB.prepare(
-    "SELECT name FROM artifacts WHERE project_id = ? AND name GLOB 'commits/[0-9][0-9][0-9][0-9].json' ORDER BY name ASC"
-  ).bind(projectId).all<{ name: string }>();
-
-  const sequences = results
-    .map((artifact) => parseCommitSequence(artifact.name))
-    .filter((value): value is number => value !== null);
-
-  const latestSequence = sequences.length > 0 ? Math.max(...sequences) : 0;
-  const nextSequence = latestSequence + 1;
-
-  return {
-    nextCommitId: String(nextSequence).padStart(4, '0'),
-    parentCommitId: latestSequence > 0 ? String(latestSequence).padStart(4, '0') : null,
-  };
-};
-
-const clearGeneratedArtifacts = async (env: Env, projectId: string) => {
-  const { results } = await env.DB.prepare(
-    "SELECT storage_key FROM artifacts WHERE project_id = ? AND name NOT GLOB 'commits/[0-9][0-9][0-9][0-9].json'"
-  ).bind(projectId).all<{ storage_key: string }>();
-
-  await Promise.all(
-    results
-      .filter((artifact) => artifact.storage_key)
-      .map((artifact) => env.BUCKET.delete(artifact.storage_key))
-  );
-
-  await env.DB.prepare(
-    "DELETE FROM artifacts WHERE project_id = ? AND name NOT GLOB 'commits/[0-9][0-9][0-9][0-9].json'"
-  ).bind(projectId).run();
-};
-
 export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> {
   async run(event: WorkflowEvent<IngestionParams>, step: WorkflowStep) {
     const { projectId, jobId } = event.payload;
+    const branchName = await ensureBranchExists(
+      this.env,
+      projectId,
+      event.payload.branchName || 'main',
+      'main',
+    );
     console.log(`[IngestionWorkflow] Starting run for project: ${projectId}, job: ${jobId}`);
     
     // Check if DB is bound
@@ -289,8 +285,8 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
 
     const insertEventLog = async (message: string, level: 'info' | 'warn' | 'error' = 'info') => {
       await this.env.DB.prepare(
-        "INSERT INTO event_logs (id, project_id, job_id, message, level) VALUES (?, ?, ?, ?, ?)"
-      ).bind(crypto.randomUUID(), projectId, jobId, message, level).run();
+        "INSERT INTO event_logs (id, project_id, job_id, branch_name, message, level) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(crypto.randomUUID(), projectId, jobId, branchName, message, level).run();
     };
 
     const updateCoordinator = async (
@@ -324,7 +320,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
         "SELECT name FROM projects WHERE id = ?"
       ).bind(projectId).first<{ name: string }>();
       const repoName = project?.name || `project-${projectId.slice(0, 8)}`;
-      const commitLineage = await getCommitLineage(this.env, projectId);
+      const commitLineage = await getCommitLineage(this.env, projectId, branchName);
 
       // ============================================================
       // Step 1: PREPARE ASSETS
@@ -591,11 +587,13 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
               processedAssets,
               commitId: commitLineage.nextCommitId,
               parentCommitId: commitLineage.parentCommitId,
+              branchName,
             }),
             projectId,
             repoName,
             commitId: commitLineage.nextCommitId,
             parentCommitId: commitLineage.parentCommitId,
+            branchName,
           });
         }
 
@@ -610,6 +608,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
             projectName: repoName,
             nextCommitId: commitLineage.nextCommitId,
             parentCommitId: commitLineage.parentCommitId,
+            branchName,
           }
         );
 
@@ -621,11 +620,13 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
               processedAssets,
               commitId: commitLineage.nextCommitId,
               parentCommitId: commitLineage.parentCommitId,
+              branchName,
             }),
             projectId,
             repoName,
             commitId: commitLineage.nextCommitId,
             parentCommitId: commitLineage.parentCommitId,
+            branchName,
           });
         }
 
@@ -636,6 +637,7 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
           repoName,
           commitId: commitLineage.nextCommitId,
           parentCommitId: commitLineage.parentCommitId,
+          branchName,
         });
       });
 
@@ -646,27 +648,28 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
         if (!synthesis) return;
         await logProgress('Generating repository artifacts...', 85, 'generating_artifacts');
 
-        await clearGeneratedArtifacts(this.env, projectId);
+        await clearGeneratedArtifactsForBranch(this.env, projectId, branchName);
 
-        await storeArtifact(this.env, projectId, jobId, 'repo.json', synthesis.repo || {});
-        await storeArtifact(this.env, projectId, jobId, 'scenes/scenes.json', synthesis.scenes || {});
-        await storeArtifact(this.env, projectId, jobId, 'timeline/base.otio.json', synthesis.timeline || {});
+        await storeArtifact(this.env, projectId, jobId, branchName, 'repo.json', synthesis.repo || {});
+        await storeArtifact(this.env, projectId, jobId, branchName, 'scenes/scenes.json', synthesis.scenes || {});
+        await storeArtifact(this.env, projectId, jobId, branchName, 'timeline/base.otio.json', synthesis.timeline || {});
 
         if (synthesis.captions_srt) {
-          await storeArtifactRaw(this.env, projectId, jobId, 'captions/captions.srt', synthesis.captions_srt, 'text/plain');
+          await storeArtifactRaw(this.env, projectId, jobId, branchName, 'captions/captions.srt', synthesis.captions_srt, 'text/plain');
         }
         if (synthesis.metadata?.video_md) {
-          await storeArtifactRaw(this.env, projectId, jobId, 'metadata/video.md', synthesis.metadata.video_md, 'text/markdown');
+          await storeArtifactRaw(this.env, projectId, jobId, branchName, 'metadata/video.md', synthesis.metadata.video_md, 'text/markdown');
         }
         if (synthesis.metadata?.scenes_md) {
-          await storeArtifactRaw(this.env, projectId, jobId, 'metadata/scenes.md', synthesis.metadata.scenes_md, 'text/markdown');
+          await storeArtifactRaw(this.env, projectId, jobId, branchName, 'metadata/scenes.md', synthesis.metadata.scenes_md, 'text/markdown');
         }
         if (synthesis.commit) {
-          await storeArtifact(this.env, projectId, jobId, `commits/${synthesis.commit.id}.json`, synthesis.commit);
+          await storeArtifact(this.env, projectId, jobId, branchName, `commits/${synthesis.commit.id}.json`, synthesis.commit);
+          await updateBranchHead(this.env, projectId, branchName, synthesis.commit.id);
           await insertEventLog(`Created commit ${synthesis.commit.id}: ${synthesis.commit.message}`);
         }
         if (synthesis.dag) {
-          await storeArtifact(this.env, projectId, jobId, 'dag/ingest.json', synthesis.dag);
+          await storeArtifact(this.env, projectId, jobId, branchName, 'dag/ingest.json', synthesis.dag);
         }
 
         await insertEventLog(`Generated intelligence artifacts (OTIO, Commits, Metadata)`);
@@ -723,23 +726,38 @@ export class IngestionWorkflow extends WorkflowEntrypoint<Env, IngestionParams> 
 // ARTIFACT HELPERS
 // ============================================================
 
-async function storeArtifact(env: Env, projectId: string, jobId: string, name: string, data: any) {
+async function storeArtifact(
+  env: Env,
+  projectId: string,
+  jobId: string | null,
+  branchName: string,
+  name: string,
+  data: any,
+) {
   const content = JSON.stringify(data, null, 2);
-  const storageKey = `projects/${projectId}/artifacts/${name}`;
+  const storageKey = buildBranchArtifactStorageKey(projectId, branchName, name);
   await env.BUCKET.put(storageKey, content, { httpMetadata: { contentType: 'application/json' } });
 
   await env.DB.prepare(
-    "INSERT INTO artifacts (id, project_id, job_id, name, storage_key, content_type, size) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).bind(crypto.randomUUID(), projectId, jobId, name, storageKey, 'application/json', content.length).run();
+    "INSERT INTO artifacts (id, project_id, job_id, branch_name, name, storage_key, content_type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(crypto.randomUUID(), projectId, jobId, branchName, name, storageKey, 'application/json', content.length).run();
 }
 
-async function storeArtifactRaw(env: Env, projectId: string, jobId: string, name: string, content: string, contentType: string) {
-  const storageKey = `projects/${projectId}/artifacts/${name}`;
+async function storeArtifactRaw(
+  env: Env,
+  projectId: string,
+  jobId: string | null,
+  branchName: string,
+  name: string,
+  content: string,
+  contentType: string,
+) {
+  const storageKey = buildBranchArtifactStorageKey(projectId, branchName, name);
   await env.BUCKET.put(storageKey, content, { httpMetadata: { contentType } });
 
   await env.DB.prepare(
-    "INSERT INTO artifacts (id, project_id, job_id, name, storage_key, content_type, size) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).bind(crypto.randomUUID(), projectId, jobId, name, storageKey, contentType, content.length).run();
+    "INSERT INTO artifacts (id, project_id, job_id, branch_name, name, storage_key, content_type, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(crypto.randomUUID(), projectId, jobId, branchName, name, storageKey, contentType, content.length).run();
 }
 
 // ============================================================
@@ -804,6 +822,7 @@ async function generateRepoWithGemini(
     projectName: string;
     nextCommitId: string;
     parentCommitId: string | null;
+    branchName: string;
   }
 ): Promise<any> {
   const ai = new GoogleGenAI({ apiKey });
@@ -844,6 +863,7 @@ You must strictly adhere to these values for metadata fields to ensure downstrea
 - **Motion**: [static, pan, tilt, zoom, dolly, truck, handheld]
 
 # Versioning & State Evolution
+- **Branch**: You are authoring the commit on branch "${context.branchName}".
 - **Commit History**: If a previous commit exists, you MUST generate the new commit ID "${context.nextCommitId}" and set the 'parent' field to ${context.parentCommitId ? `"${context.parentCommitId}"` : 'null'}.
 - **State Diffing**: Only update files that have changed. If a file is identical to the previous version, do not regenerate it; reference the existing file path.
 - **Message**: Commit messages must describe the *change* (e.g., "fix: adjust scene 2 boundary", "feat: refine emotion tags").
@@ -927,6 +947,7 @@ You MUST output ONLY valid JSON matching this exact structure. No markdown, no c
   "commit": {
     "id": "${context.nextCommitId}",
     "parent": ${context.parentCommitId ? `"${context.parentCommitId}"` : 'null'},
+    "branch": "${context.branchName}",
     "timestamp": "string (ISO 8601)",
     "message": "string (conventional commit: feat: ingest 14s makeup transformation...)",
     "state": {
