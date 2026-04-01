@@ -23,6 +23,16 @@ export const apiClient = {
     return res.json();
   },
 
+  async updateProject(id: string, updates: { name?: string; brief?: string }) {
+    const res = await fetch(`${API_BASE}/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update project');
+    return res.json();
+  },
+
 
   async getProjectPayload(id: string) {
     const res = await fetch(`${API_BASE}/api/projects/${id}/payload`);

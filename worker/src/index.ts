@@ -190,6 +190,18 @@ app.post('/api/projects', async (c) => {
   return c.json(project);
 });
 
+app.patch('/api/projects/:id', async (c) => {
+  const id = c.req.param('id');
+  const { name, brief } = await c.req.json();
+  const now = Math.floor(Date.now() / 1000);
+
+  await c.env.DB.prepare(
+    "UPDATE projects SET name = COALESCE(?, name), brief = COALESCE(?, brief), updated_at = ? WHERE id = ?"
+  ).bind(name || null, brief || null, now, id).run();
+
+  return c.json({ success: true });
+});
+
 app.get('/api/projects', async (c) => {
   const { results } = await c.env.DB.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
   return c.json(results);

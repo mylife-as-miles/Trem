@@ -13,7 +13,7 @@ import SettingsView from './dashboard/settings/SettingsPage';
 
 import { RepoData } from './utils/db';
 import { useTremStore, ViewType } from './store/useTremStore';
-import { useRepo } from './hooks/useQueries';
+import { useRepo, useProjectPayload } from './hooks/useQueries';
 
 const App: React.FC = () => {
     // Global State
@@ -29,19 +29,40 @@ const App: React.FC = () => {
     // Local State for Query
     const [activeRepoId, setActiveRepoId] = useState<number | undefined>(undefined);
     const [activeProjectId, setActiveProjectId] = useState<string | undefined>(undefined);
+    
+    // Fetchers
     const { data: fetchedRepo, isLoading: isRepoLoading } = useRepo(activeRepoId);
+    const { data: projectPayload, isLoading: isProjectLoading } = useProjectPayload(activeProjectId);
 
-    // Sync Query Data to Store
+    // Sync Query Data (Local) to Store
     useEffect(() => {
         if (fetchedRepo) {
             setRepoData(fetchedRepo);
-        } else if (activeRepoId && !isRepoLoading && !fetchedRepo) {
-            // Repo not found
-            // console.warn("Repo not found for ID:", activeRepoId);
-            // window.history.replaceState({}, '', '/trem-edit');
-            // setCurrentView('trem-edit');
         }
-    }, [fetchedRepo, setRepoData, activeRepoId, isRepoLoading, setCurrentView]);
+    }, [fetchedRepo, setRepoData]);
+
+    // Sync Query Data (Backend/UUID) to Store
+    useEffect(() => {
+        if (projectPayload && activeProjectId) {
+            try {
+                const fs = typeof projectPayload.project.file_system === 'string' 
+                    ? JSON.parse(projectPayload.project.file_system) 
+                    : (projectPayload.project.file_system || []);
+
+                const transformedRepo: RepoData = {
+                    id: projectPayload.project.id,
+                    name: projectPayload.project.name,
+                    brief: projectPayload.project.brief || '',
+                    assets: projectPayload.assets || [],
+                    fileSystem: fs,
+                    created: projectPayload.project.created_at ? (projectPayload.project.created_at * 1000) : Date.now()
+                };
+                setRepoData(transformedRepo);
+            } catch (e) {
+                console.error("Failed to parse backend project filesystem/data", e);
+            }
+        }
+    }, [projectPayload, activeProjectId, setRepoData]);
 
     // Initial Route Handling & PopState Listener
     useEffect(() => {

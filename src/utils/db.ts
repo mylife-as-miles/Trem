@@ -2,7 +2,7 @@
 // implementation since we cannot install the actual library due to environment issues.
 
 export interface RepoData {
-    id?: number;
+    id?: number | string;
     name: string;
     brief: string;
     assets: any[];

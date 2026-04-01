@@ -6,6 +6,7 @@ import SimpleMarkdown from '../../components/ui/SimpleMarkdown';
 import CommitDetailsView from './components/CommitDetails';
 import AlertDialog from '../../components/ui/AlertDialog';
 import { db } from '../../utils/db';
+import { apiClient } from '../../api-client';
 
 export interface FileNode {
   id: string;
@@ -159,7 +160,13 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
   const handleSaveBrief = async () => {
     if (repoData?.id) {
       try {
-        await db.updateRepo(repoData.id, { brief: editedBrief });
+        if (typeof repoData.id === 'string') {
+          // Backend Project
+          await apiClient.updateProject(repoData.id, { brief: editedBrief });
+        } else {
+          // Local Project
+          await db.updateRepo(repoData.id, { brief: editedBrief });
+        }
         // Force parent to reload repo data
         window.location.reload();
       } catch (error) {
@@ -172,7 +179,14 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
   const handleDelete = async () => {
     if (repoData?.id) {
       try {
-        await db.deleteRepo(repoData.id);
+        if (typeof repoData.id === 'string') {
+          // Backend Project
+          await apiClient.deleteProject(repoData.id);
+        } else {
+          // Local Project
+          await db.deleteRepo(repoData.id as number);
+        }
+        
         // Navigate back to dashboard
         if (onNavigate) {
           onNavigate('dashboard');
