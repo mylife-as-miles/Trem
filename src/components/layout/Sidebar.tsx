@@ -83,6 +83,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, onNavigate, onSelect
   const handleRepoClick = (repo: any) => {
     if (onSelectRepo) {
       onSelectRepo(repo);
+      return;
     }
     onNavigate('repo');
   };

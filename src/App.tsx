@@ -404,6 +404,13 @@ const App: React.FC = () => {
 
     const handleSelectRepo = (data: RepoData) => {
         setRepoData(data);
+        if (typeof data.id === 'string') {
+            setActiveRepoId(undefined);
+            setActiveProjectId(data.id);
+        } else {
+            setActiveProjectId(undefined);
+            setActiveRepoId(data.id);
+        }
         const url = data.id ? `/repo/${data.id}` : '/trem-edit';
         window.history.pushState({}, '', url);
         setCurrentView('repo');

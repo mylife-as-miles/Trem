@@ -141,9 +141,17 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
     // Background job state monitoring
     useEffect(() => {
         if (projectPayload && !isProcessingUpload) {
-            if (projectPayload.activeJob?.status === 'completed') {
+            const effectiveStatus = String(
+                projectPayload.liveStatus
+                || projectPayload.activeJob?.status
+                || projectPayload.project?.status
+                || ''
+            );
+            const hasGeneratedRepoOutput = (projectPayload.artifacts?.length || 0) > 0 || (projectPayload.commits?.length || 0) > 0;
+
+            if (effectiveStatus === 'completed' || hasGeneratedRepoOutput) {
                 setStep('completed');
-            } else if (projectPayload.activeJob?.status === 'failed') {
+            } else if (effectiveStatus === 'failed' || effectiveStatus === 'error') {
                 // Optionally handle failure explicitly, but for now we'll just show it in the ingest UI
             } else {
                 setStep('ingest');
