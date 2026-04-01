@@ -78,6 +78,19 @@ const getAgentTone = (status: string) => {
     return 'border-slate-200 bg-white text-slate-500 dark:border-border-dark dark:bg-surface-card dark:text-gray-400';
 };
 
+const getAgentFocusLine = (agent: { status: string; assetName?: string | null }) => {
+    if (agent.assetName) {
+        if (agent.status === 'transcribing') return 'Extracting transcript + timing';
+        if (agent.status === 'analyzing') return 'Generating tags + scene context';
+        if (agent.status === 'queued') return 'Reserved for the next worker pass';
+        if (agent.status === 'completed') return 'Pass committed back to the repo';
+        if (agent.status === 'error') return 'Needs attention before retry';
+        return 'Preparing the current source asset';
+    }
+
+    return agent.status === 'queued' ? 'Waiting for a source asset' : 'Standing by for available work';
+};
+
 export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, initialProjectId }) => {
     // Current Step: 'details' -> 'uploading' -> 'ingest' -> 'completed'
     const [step, setStep] = useState<'details' | 'uploading' | 'ingest' | 'completed'>('details');
@@ -670,23 +683,26 @@ export const CreateRepoView: React.FC<CreateRepoViewProps> = ({ onNavigate, init
                                             {liveAgentPool.map((agent: any) => (
                                                 <div
                                                     key={agent.slot}
-                                                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-border-dark dark:bg-background-dark/50"
+                                                    className="flex min-h-[196px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-border-dark dark:bg-background-dark/50"
                                                 >
-                                                    <div className="flex items-start justify-between gap-3">
-                                                        <div>
+                                                    <div className="flex min-w-0 items-start justify-between gap-3">
+                                                        <div className="min-w-0 flex-1">
                                                             <div className="text-[11px] font-mono uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
                                                                 Agent {String(agent.slot).padStart(2, '0')}
                                                             </div>
-                                                            <div className="mt-2 text-sm font-display font-bold tracking-tight text-slate-900 dark:text-white">
+                                                            <div className="mt-3 break-words text-base font-display font-bold leading-6 tracking-tight text-slate-900 dark:text-white">
                                                                 {agent.assetName || 'Standing by'}
                                                             </div>
+                                                            <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-gray-400">
+                                                                {getAgentFocusLine(agent)}
+                                                            </div>
                                                         </div>
-                                                        <div className={`rounded-full border px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.18em] ${getAgentTone(agent.status)}`}>
+                                                        <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.18em] ${getAgentTone(agent.status)}`}>
                                                             {formatAgentStatus(agent.status)}
                                                         </div>
                                                     </div>
 
-                                                    <div className="mt-4 flex items-center justify-between text-xs text-slate-500 dark:text-gray-400">
+                                                    <div className="mt-auto flex items-center justify-between border-t border-slate-200/70 pt-4 text-xs text-slate-500 dark:border-border-dark dark:text-gray-400">
                                                         <span>Completed</span>
                                                         <span className="font-mono text-slate-700 dark:text-slate-200">{agent.completedCount || 0}</span>
                                                     </div>

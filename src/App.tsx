@@ -12,6 +12,7 @@ import ActivityLogsView from './dashboard/repo/ActivityLogsPage';
 import SettingsView from './dashboard/settings/SettingsPage';
 
 import { RepoData } from './utils/db';
+import { apiClient } from './api-client';
 import { useTremStore, ViewType } from './store/useTremStore';
 import { useRepo, useProjectPayload } from './hooks/useQueries';
 

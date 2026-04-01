@@ -314,10 +314,10 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-6 md:p-10">
         <div className="max-w-6xl mx-auto space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-auto lg:h-[500px]">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.95fr)]">
 
             {/* Creative Brief Card */}
-            <div className="lg:col-span-2 glass-panel rounded-xl p-8 flex flex-col relative overflow-hidden group min-h-[300px] border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5">
+            <div className="glass-panel rounded-xl border border-slate-200 bg-white p-8 dark:border-white/10 dark:bg-white/5 relative flex min-h-[320px] flex-col overflow-hidden group xl:min-h-[520px]">
               <div className="absolute top-0 right-0 p-8 opacity-10 dark:opacity-20 pointer-events-none">
                 <span className="material-icons-outlined text-9xl text-slate-400 dark:text-zinc-500">description</span>
               </div>
@@ -402,7 +402,7 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
             </div>
 
             {/* Repository Files - Mac Style Widget */}
-            <div className="flex flex-col bg-white dark:bg-background-dark rounded-xl overflow-hidden border border-slate-200 dark:border-white/10">
+            <div className="flex min-h-[320px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-background-dark xl:min-h-[520px]">
               {/* Widget Header */}
               <div className="h-10 flex items-center justify-between px-4 border-b border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-background-dark shrink-0">
                 <div className="flex items-center gap-1.5">
@@ -423,8 +423,18 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
               </div>
 
               {/* Widget Content */}
-              <div className="flex-1 p-3 overflow-y-auto bg-white dark:bg-[#111]">
-                {renderTree(fileSystem)}
+              <div className="flex-1 overflow-y-auto bg-white p-3 dark:bg-[#111]">
+                {fileSystem.length > 0 ? renderTree(fileSystem) : (
+                  <div className="flex h-full min-h-[240px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-6 text-center dark:border-white/10 dark:bg-white/[0.03]">
+                    <span className="material-icons-outlined text-4xl text-primary">folder_open</span>
+                    <div className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-200">
+                      Waiting for repository files
+                    </div>
+                    <div className="mt-2 max-w-xs text-xs leading-5 text-slate-500 dark:text-zinc-500">
+                      Trem will list the nested Cloudflare artifacts here as soon as the payload sync completes.
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -463,14 +473,28 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
                         <tr
                           key={idx}
                           onClick={() => handleCommitClick(repoData?.commits?.[idx] || entry)}
-                          className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group cursor-pointer"
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              handleCommitClick(repoData?.commits?.[idx] || entry);
+                            }
+                          }}
+                          tabIndex={0}
+                          role="button"
+                          aria-label={`Open commit ${entry.message}`}
+                          className="cursor-pointer transition-colors group hover:bg-slate-50 focus:bg-slate-50 focus:outline-none dark:hover:bg-white/5 dark:focus:bg-white/5"
                         >
                           <td className="px-6 py-4 flex items-center gap-3">
                             <span className="w-2 h-2 rounded-full bg-primary"></span>
                             <span className="text-slate-700 dark:text-white font-bold">{entry.agent}</span>
                           </td>
                           <td className="px-6 py-4 text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                            {entry.message}
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="min-w-0 truncate">{entry.message}</span>
+                              <span className="material-icons-outlined text-sm text-slate-300 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-zinc-600">
+                                open_in_new
+                              </span>
+                            </div>
                           </td>
                           <td className="px-6 py-4 text-right text-slate-500">{timeStr}</td>
                         </tr>
@@ -501,6 +525,14 @@ const VideoRepoOverview: React.FC<VideoRepoOverviewProps> = ({ repoData, onNavig
           confirmText="Delete"
           cancelText="Cancel"
           type="danger"
+        />
+      )}
+
+      {selectedCommit && (
+        <CommitDetailsView
+          commit={selectedCommit}
+          repoName={repoData?.name}
+          onClose={() => setSelectedCommit(null)}
         />
       )}
     </div>
