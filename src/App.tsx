@@ -210,7 +210,7 @@ const App: React.FC = () => {
     
     // Fetchers
     const { data: fetchedRepo, isLoading: isRepoLoading } = useRepo(activeRepoId);
-    const { data: projectPayload, isLoading: isProjectLoading } = useProjectPayload(activeProjectId);
+    const { data: projectPayload, isLoading: isProjectLoading, isFetched: isProjectPayloadFetched } = useProjectPayload(activeProjectId);
 
     // Sync Query Data (Local) to Store
     useEffect(() => {
@@ -228,6 +228,27 @@ const App: React.FC = () => {
             }
         }
     }, [projectPayload, activeProjectId, setRepoData]);
+
+    useEffect(() => {
+        if (!activeProjectId || !isProjectPayloadFetched || projectPayload !== null) {
+            return;
+        }
+
+        const path = window.location.pathname;
+        setRepoData(null);
+        setActiveProjectId(undefined);
+
+        if (path.startsWith('/create-repo/')) {
+            window.history.replaceState({}, '', '/create-repo');
+            setCurrentView('create-repo');
+            return;
+        }
+
+        if (path.startsWith('/repo/')) {
+            window.history.replaceState({}, '', '/trem-edit');
+            setCurrentView('trem-edit');
+        }
+    }, [activeProjectId, isProjectPayloadFetched, projectPayload, setCurrentView, setRepoData]);
 
     // Initial Route Handling & PopState Listener
     useEffect(() => {
