@@ -2,12 +2,6 @@ import { WorkflowEntrypoint, WorkflowEvent, WorkflowStep } from 'cloudflare:work
 import { GoogleGenAI } from '@google/genai';
 import { buildBranchArtifactStorageKey } from '../db/branching';
 
-type Env = {
-  DB: D1Database;
-  BUCKET: R2Bucket;
-  PROJECT_COORDINATOR: DurableObjectNamespace;
-  GEMINI_API_KEY?: string;
-};
 
 type PlanParams = {
   projectId: string;
@@ -23,7 +17,7 @@ export class PlanWorkflow extends WorkflowEntrypoint<Env, PlanParams> {
 
     try {
       // 1. Fetch Context (Repo structure, scenes)
-      const context = await step.do('Fetch Context', async () => {
+      const context = await step.do('Fetch Context', async (): Promise<any> => {
         // Fetch repo.json and scenes.json from R2
         const repoKey = buildBranchArtifactStorageKey(projectId, branchName, 'repo.json');
         const scenesKey = buildBranchArtifactStorageKey(projectId, branchName, 'scenes.json');
@@ -38,7 +32,7 @@ export class PlanWorkflow extends WorkflowEntrypoint<Env, PlanParams> {
       });
 
       // 2. Generate Strategy & Select Agents (Simulate LLM Call if no key)
-      const agentPlan = await step.do('Generate Plan', async () => {
+      const agentPlan = await step.do('Generate Plan', async (): Promise<any> => {
         let strategy, agents, workflow, otioDraft;
 
         if (this.env.GEMINI_API_KEY) {
@@ -98,7 +92,7 @@ export class PlanWorkflow extends WorkflowEntrypoint<Env, PlanParams> {
       });
 
       // 3. Save Plan to D1
-      await step.do('Save Plan', async () => {
+      await step.do('Save Plan', async (): Promise<any> => {
          await this.env.DB.prepare(
           `UPDATE agent_plans
            SET status = 'ready',
@@ -123,7 +117,7 @@ export class PlanWorkflow extends WorkflowEntrypoint<Env, PlanParams> {
       });
 
       // 4. Notify UI via Durable Object (Optional but good for real-time)
-      await step.do('Notify UI', async () => {
+      await step.do('Notify UI', async (): Promise<any> => {
         const doId = this.env.PROJECT_COORDINATOR.idFromName(projectId);
         const coordinator = this.env.PROJECT_COORDINATOR.get(doId);
         await coordinator.fetch(`http://internal/broadcast`, {
@@ -137,7 +131,7 @@ export class PlanWorkflow extends WorkflowEntrypoint<Env, PlanParams> {
 
     } catch (e: any) {
         // Handle Error
-        await step.do('Handle Error', async () => {
+        await step.do('Handle Error', async (): Promise<any> => {
            await this.env.DB.prepare(`UPDATE agent_plans SET status = 'failed' WHERE id = ?`).bind(planId).run();
            await this.env.DB.prepare(`UPDATE jobs SET status = 'failed', error = ? WHERE id = ?`).bind(e.message, jobId).run();
         });

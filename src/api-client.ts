@@ -162,6 +162,31 @@ export const apiClient = {
     return res.json();
   },
 
+  connectTimelineWebSocket(projectId: string, onMessage: (msg: any) => void) {
+    const wsUrl = new URL(`${API_BASE}/api/projects/${projectId}/timeline/ws`);
+    wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    const ws = new WebSocket(wsUrl.toString());
+    ws.onmessage = (event) => onMessage(JSON.parse(event.data));
+    return ws;
+  },
+
+  async submitTimelineCommand(projectId: string, command: any, sessionId?: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/timeline/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command, sessionId }),
+    });
+    if (!res.ok) throw new Error('Failed to submit command');
+    return res.json();
+  },
+
+  async getElevenLabsToken(projectId: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/timeline/token`);
+    if (!res.ok) throw new Error('Failed to fetch ElevenLabs token');
+    return res.json();
+  },
+
   connectWebSocket(projectId: string, onMessage: (msg: any) => void) {
     const wsUrl = new URL(`${API_BASE}/api/projects/${projectId}/ws`);
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';

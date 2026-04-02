@@ -10,13 +10,6 @@ import {
   updateBranchHead,
 } from '../db/branching';
 
-type Env = {
-  DB: D1Database;
-  BUCKET: R2Bucket;
-  PROJECT_COORDINATOR: DurableObjectNamespace;
-  GEMINI_API_KEY?: string;
-  REPLICATE_API_TOKEN?: string;
-};
 
 type IngestionParams = {
   projectId: string;
