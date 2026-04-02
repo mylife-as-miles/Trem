@@ -170,4 +170,23 @@ export const apiClient = {
     ws.onmessage = (event) => onMessage(JSON.parse(event.data));
     return ws;
   }
+,
+
+  // --- Agent Planning Methods ---
+  async generatePlan(projectId: string, prompt: string, branchName?: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, branchName }),
+    });
+    if (!res.ok) throw new Error('Failed to generate plan');
+    return res.json();
+  },
+
+  async getPlanStatus(projectId: string, planId: string) {
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/plans/${planId}`);
+    if (!res.ok) throw new Error('Failed to fetch plan status');
+    return res.json();
+  }
+
 };

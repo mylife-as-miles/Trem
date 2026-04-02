@@ -44,12 +44,19 @@
       "name": "ingestion-workflow",
       "binding": "INGESTION_WORKFLOW",
       "class_name": "IngestionWorkflow"
+    },
+    {
+      "name": "plan-workflow",
+      "binding": "PLAN_WORKFLOW",
+      "class_name": "PlanWorkflow"
     }
   ],
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ProjectCoordinatorDO"]
+      "new_sqlite_classes": [
+        "ProjectCoordinatorDO"
+      ]
     }
   ]
 }
