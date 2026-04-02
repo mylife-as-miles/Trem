@@ -7,7 +7,9 @@ interface TemplateCarouselProps {
 }
 
 const TemplateCarousel: React.FC<TemplateCarouselProps> = ({ templates, onSelect }) => {
-    const [activeIndex, setActiveIndex] = useState(0);
+    // Find the first enabled template to be the default active index, fallback to 0
+    const defaultIndex = templates.findIndex(t => t.enabled !== false);
+    const [activeIndex, setActiveIndex] = useState(defaultIndex !== -1 ? defaultIndex : 0);
     const containerRef = useRef<HTMLDivElement>(null);
 
     // Keyboard Navigation
@@ -89,16 +91,17 @@ const TemplateCarousel: React.FC<TemplateCarouselProps> = ({ templates, onSelect
                     return (
                         <div
                             key={template.id}
-                            className="absolute top-[5%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-[450px]"
+                            className={`absolute top-[5%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-[450px] ${template.enabled === false ? 'cursor-not-allowed opacity-50 grayscale' : 'cursor-pointer'}`}
                             style={{
                                 transform: style.transform,
                                 zIndex: style.zIndex,
                                 opacity: style.opacity,
                                 filter: style.filter,
                                 transition: style.transition,
-                                transformOrigin: 'center center' // Important for rotation
+                                transformOrigin: 'center center'
                             }}
                             onClick={() => {
+                                if (template.enabled === false) return;
                                 if (index === activeIndex) {
                                     onSelect(template);
                                 } else {
@@ -106,18 +109,27 @@ const TemplateCarousel: React.FC<TemplateCarouselProps> = ({ templates, onSelect
                                 }
                             }}
                         >
-                            <TemplateCard3D
-                                {...template}
-                                isActive={index === activeIndex}
-                                onClick={() => { }} // Handled by wrapper for simpler logic
-                                rarity={index === activeIndex ? 'special' : 'gold'} // Active is special
-                                rating={90 + (index % 5)} // Mock data variations
-                                stats={[
-                                    { label: 'SPD', value: 85 + (index % 10) },
-                                    { label: 'VIS', value: 80 + (index % 15) },
-                                    { label: 'CMP', value: 90 - (index % 5) }
-                                ]}
-                            />
+                            <div className="relative w-full h-full pointer-events-none">
+                                {template.enabled === false && (
+                                    <div className="absolute inset-0 flex items-center justify-center z-50">
+                                        <div className="bg-black/80 text-white px-4 py-2 rounded-full font-bold tracking-widest text-sm border border-white/20 backdrop-blur-sm shadow-xl">
+                                            COMING SOON
+                                        </div>
+                                    </div>
+                                )}
+                                <TemplateCard3D
+                                    {...template}
+                                    isActive={index === activeIndex}
+                                    onClick={() => { }} // Handled by wrapper for simpler logic
+                                    rarity={index === activeIndex ? 'special' : 'gold'} // Active is special
+                                    rating={90 + (index % 5)} // Mock data variations
+                                    stats={[
+                                        { label: 'SPD', value: 85 + (index % 10) },
+                                        { label: 'VIS', value: 80 + (index % 15) },
+                                        { label: 'CMP', value: 90 - (index % 5) }
+                                    ]}
+                                />
+                            </div>
                         </div>
                     );
                 })}

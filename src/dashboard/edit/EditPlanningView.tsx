@@ -21,6 +21,7 @@ interface PlanItem {
 const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApprove, onBack }) => {
 
     const [status, setStatus] = useState<'analyzing' | 'ready' | 'failed'>('analyzing');
+    const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const [chatInput, setChatInput] = useState("");
     const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'agent', text: string, metadata?: string }[]>([
         { role: 'user', text: prompt }
@@ -34,7 +35,7 @@ const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApp
     // Initial Plan Generation
     useEffect(() => {
         let isSubscribed = true;
-        let pollInterval: NodeJS.Timeout;
+
 
         const startPlanning = async () => {
             try {
@@ -45,12 +46,12 @@ const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApp
                 }
 
                 // 2. Poll for status
-                pollInterval = setInterval(async () => {
+                pollIntervalRef.current = setInterval(async () => {
                     try {
                         const statusRes = await apiClient.getPlanStatus(repo.id, response.planId);
 
                         if (statusRes.status === 'ready' || statusRes.status === 'completed') {
-                            clearInterval(pollInterval);
+                            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                             if (isSubscribed) {
                                 setPlanData(statusRes);
                                 setStatus('ready');
@@ -64,7 +65,7 @@ const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApp
                                 ]);
                             }
                         } else if (statusRes.status === 'failed') {
-                            clearInterval(pollInterval);
+                            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                             if (isSubscribed) {
                                 setStatus('failed');
                                 setChatMessages(prev => [
@@ -94,7 +95,7 @@ const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApp
 
         return () => {
             isSubscribed = false;
-            if (pollInterval) clearInterval(pollInterval);
+            if (pollInterval) if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         };
     }, [repo.id, prompt]);
 
@@ -116,11 +117,11 @@ const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApp
             setCurrentPlanId(response.planId);
 
             // Poll for the new plan
-            const pollInterval = setInterval(async () => {
+            pollIntervalRef.current = setInterval(async () => {
                 try {
                     const statusRes = await apiClient.getPlanStatus(repo.id, response.planId);
                     if (statusRes.status === 'ready' || statusRes.status === 'completed') {
-                        clearInterval(pollInterval);
+                        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                         setPlanData(statusRes);
                         setStatus('ready');
                         setChatMessages(prev => [
@@ -128,7 +129,7 @@ const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApp
                             { role: 'agent', text: "Strategy updated based on your feedback." }
                         ]);
                     } else if (statusRes.status === 'failed') {
-                        clearInterval(pollInterval);
+                        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                         setStatus('failed');
                         setChatMessages(prev => [
                             ...prev,
