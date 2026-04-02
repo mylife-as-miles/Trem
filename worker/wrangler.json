@@ -36,6 +36,10 @@
       {
         "name": "PROJECT_COORDINATOR",
         "class_name": "ProjectCoordinatorDO"
+      },
+      {
+        "name": "TIMELINE_SESSION",
+        "class_name": "TimelineSessionDO"
       }
     ]
   },
@@ -49,12 +53,18 @@
       "name": "plan-workflow",
       "binding": "PLAN_WORKFLOW",
       "class_name": "PlanWorkflow"
+    },
+    {
+      "name": "timeline-workflow",
+      "binding": "TIMELINE_WORKFLOW",
+      "class_name": "TimelineWorkflow"
     }
   ],
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": [
+        "TimelineSessionDO",
         "ProjectCoordinatorDO"
       ]
     }

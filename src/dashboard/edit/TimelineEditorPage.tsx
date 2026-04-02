@@ -77,6 +77,49 @@ const TimelineEditor: React.FC<TimelineEditorProps> = ({ onNavigate }) => {
     const [activeTab, setActiveTab] = useState<'timeline' | 'instructions' | 'copilot'>('instructions');
     const { editPlan, repoData } = useTremStore();
     const [isPlaying, setIsPlaying] = useState(false);
+
+    // --- Realtime / Workflow State ---
+    const [connected, setConnected] = useState(false);
+    const [messages, setMessages] = useState<any[]>([]);
+    const [commandInput, setCommandInput] = useState('');
+    const wsRef = useRef<WebSocket | null>(null);
+
+    useEffect(() => {
+        if (!projectId) return;
+
+        const ws = apiClient.connectTimelineWebSocket(projectId, (msg) => {
+            console.log("Timeline WS Message:", msg);
+            setMessages(prev => [...prev, msg]);
+            if (msg.type === 'workflow_complete') {
+                // handle workflow completion state updates here
+            }
+        });
+
+        ws.onopen = () => setConnected(true);
+        ws.onclose = () => setConnected(false);
+        wsRef.current = ws;
+
+        return () => {
+            ws.close();
+        };
+    }, [projectId]);
+
+    const handleCommandSubmit = async () => {
+        if (!commandInput.trim() || !projectId) return;
+
+        const cmd = { type: 'chat', text: commandInput };
+
+        // Optimistic UI update
+        setMessages(prev => [...prev, { sender: 'user', ...cmd }]);
+        setCommandInput('');
+
+        try {
+            await apiClient.submitTimelineCommand(projectId, cmd);
+        } catch (e) {
+            console.error("Failed to submit command:", e);
+        }
+    };
+
     const [currentTime, setCurrentTime] = useState(0);
 
     const [clips, setClips] = useState<Clip[]>([
@@ -383,34 +426,35 @@ const TimelineEditor: React.FC<TimelineEditorProps> = ({ onNavigate }) => {
                             <span className="text-[10px] text-slate-500 dark:text-zinc-700 font-mono bg-slate-200 dark:bg-surface-card px-2 py-1 rounded">Today, 10:23 AM</span>
                         </div>
 
-                        <div className="flex flex-col items-end gap-1 ml-4 animate-fade-in-up">
-                            <div className="bg-white border border-slate-200 dark:bg-surface-card dark:border-border-dark text-slate-800 dark:text-gray-100 text-sm p-3 rounded-2xl rounded-tr-sm shadow-sm max-w-full">
-                                Swap the second clip for a close-up
+                        {messages.length === 0 ? (
+                            <div className="text-center py-10 text-slate-500 dark:text-zinc-500 text-sm italic">
+                                Ready for your commands. Try "Swap clip 2" or "Make it punchier".
                             </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-[9px] text-slate-400 dark:text-gray-600 font-mono uppercase">User</span>
-                            </div>
-                        </div>
-
-                        <div className="flex flex-col items-start gap-1 mr-4 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
-                            <div className="flex gap-2 w-full">
-                                <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-primary to-emerald-800 flex items-center justify-center shrink-0 mt-1 shadow-[0_0_10px_rgba(34,197,94,0.4)]">
-                                    <span className="material-icons-outlined text-[14px] text-white">auto_awesome</span>
-                                </div>
-                                <div className="flex-1">
-                                    <div className="bg-white dark:bg-primary/5 text-slate-700 dark:text-gray-200 text-sm p-3 rounded-2xl rounded-tl-sm border border-slate-200 dark:border-primary/20 backdrop-blur-sm shadow-sm dark:shadow-[0_0_20px_-5px_rgba(34,197,94,0.15)]">
-                                        <p className="mb-3 leading-relaxed">I'm on it. I've identified <span className="text-slate-700 dark:text-white font-mono text-xs bg-slate-100 dark:bg-white/10 px-1 rounded">Shot_02_CloseUp</span> as the best candidate.</p>
-                                        <div className="bg-slate-50 dark:bg-background-dark/40 rounded border border-slate-200 dark:border-primary/30 p-2.5 flex items-center gap-3">
-                                            <span className="material-icons-outlined text-primary animate-spin text-lg">sync</span>
-                                            <div>
-                                                <div className="text-xs font-bold text-slate-800 dark:text-white mb-0.5">Updating OTIO instructions...</div>
-                                                <div className="text-[10px] font-mono text-slate-500 dark:text-gray-400">Re-rendering proxy (Layer 3)</div>
+                        ) : (
+                            messages.map((msg, i) => (
+                                <div key={i} className={`flex flex-col gap-1 ${msg.sender === 'user' ? 'items-end ml-4' : 'items-start mr-4'} animate-fade-in-up`}>
+                                    <div className={`flex gap-2 w-full ${msg.sender === 'user' ? 'flex-row-reverse' : ''}`}>
+                                        {msg.sender === 'agent' && (
+                                            <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-primary to-emerald-800 flex items-center justify-center shrink-0 mt-1 shadow-[0_0_10px_rgba(34,197,94,0.4)]">
+                                                <span className="material-icons-outlined text-[14px] text-white">auto_awesome</span>
+                                            </div>
+                                        )}
+                                        <div className="max-w-[85%]">
+                                            <div className={`${
+                                                msg.sender === 'user'
+                                                ? 'bg-primary text-white border-primary rounded-tr-sm'
+                                                : 'bg-white dark:bg-primary/5 text-slate-700 dark:text-gray-200 rounded-tl-sm border border-slate-200 dark:border-primary/20 backdrop-blur-sm'
+                                            } text-sm p-3 rounded-2xl shadow-sm`}>
+                                                <p className="leading-relaxed">{msg.text || msg.message}</p>
+                                            </div>
+                                            <div className={`flex items-center gap-2 mt-1 ${msg.sender === 'user' ? 'justify-end' : ''}`}>
+                                                <span className="text-[9px] text-slate-400 dark:text-gray-600 font-mono uppercase">{msg.sender}</span>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
+                            ))
+                        )}
                     </div>
 
                     <div className="p-4 border-t border-slate-200 dark:border-border-dark bg-white dark:bg-background-dark">
@@ -419,10 +463,17 @@ const TimelineEditor: React.FC<TimelineEditorProps> = ({ onNavigate }) => {
                             <div className="relative flex items-center bg-slate-50 dark:bg-surface-card rounded-lg border border-slate-200 dark:border-border-dark focus-within:border-primary/50 transition-colors">
                                 <input
                                     className="w-full bg-transparent border-none text-sm text-slate-800 dark:text-white focus:ring-0 py-3 pl-3 pr-10 font-mono placeholder-slate-400 dark:placeholder-zinc-600 focus:outline-none"
-                                    placeholder="Command agents..."
+                                    placeholder={connected ? "Command agents..." : "Connecting..."}
                                     type="text"
+                                    value={commandInput}
+                                    onChange={(e) => setCommandInput(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCommandSubmit()}
+                                    disabled={!connected}
                                 />
-                                <button className="absolute right-2 p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded transition-all">
+                                <button
+                                    onClick={handleCommandSubmit}
+                                    disabled={!connected || !commandInput.trim()}
+                                    className="absolute right-2 p-1.5 text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded transition-all disabled:opacity-50">
                                     <span className="material-icons-outlined text-lg">send</span>
                                 </button>
                             </div>

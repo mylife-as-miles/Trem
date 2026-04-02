@@ -24,13 +24,6 @@ import {
 export { ProjectCoordinatorDO } from './durable-objects/project-coordinator';
 export { IngestionWorkflow } from './workflows/ingestion-workflow';
 
-type Env = {
-  DB: D1Database;
-  BUCKET: R2Bucket;
-  PROJECT_COORDINATOR: DurableObjectNamespace;
-  INGESTION_WORKFLOW: any; // Workflow API
-  PLAN_WORKFLOW: any;
-};
 
 type WorkflowInstanceStatus =
   | 'queued'
@@ -751,14 +744,34 @@ app.post('/api/projects/:projectId/ingest', async (c) => {
 });
 
 // --- WebSocket for Live Updates ---
-app.get('/api/projects/:projectId/ws', async (c) => {
+app.get('/api/projects/:projectId/timeline/ws', async (c) => {
   const projectId = c.req.param('projectId');
-  const doId = c.env.PROJECT_COORDINATOR.idFromName(projectId);
-  const stub = c.env.PROJECT_COORDINATOR.get(doId);
-
-  // Pass the WebSocket request to the Durable Object
+  const doId = c.env.TIMELINE_SESSION.idFromName(projectId);
+  const stub = c.env.TIMELINE_SESSION.get(doId);
   return stub.fetch(c.req.raw);
 });
+
+app.post('/api/projects/:projectId/timeline/command', async (c) => {
+  const projectId = c.req.param('projectId');
+  const body = await c.req.json();
+  const sessionId = body.sessionId || 'default';
+  const commandId = crypto.randomUUID();
+
+  if (c.env.TIMELINE_WORKFLOW) {
+    await c.env.TIMELINE_WORKFLOW.create({
+      id: commandId,
+      params: { projectId, commandId, sessionId, command: body.command }
+    });
+  }
+
+  return c.json({ commandId, status: 'processing' });
+});
+
+app.get('/api/projects/:projectId/timeline/token', async (c) => {
+  // Stub endpoint for ElevenLabs token
+  return c.json({ token: 'mock_elevenlabs_token_123' });
+});
+
 
 
 // --- Agent Planning Routes ---
@@ -806,14 +819,21 @@ app.get('/api/projects/:projectId/plans/:planId', async (c) => {
 
   // Parse JSON fields
   return c.json({
-      ...plan,
-      strategy: plan.strategy_json ? JSON.parse(plan.strategy_json) : null,
-      agents: plan.agents_json ? JSON.parse(plan.agents_json) : null,
-      workflow: plan.workflow_json ? JSON.parse(plan.workflow_json) : null,
-      otioDraft: plan.otio_json ? JSON.parse(plan.otio_json) : null,
+      id: plan.id,
+      project_id: plan.project_id,
+      job_id: plan.job_id,
+      prompt: plan.prompt,
+      status: plan.status,
+      created_at: plan.created_at,
+      strategy: plan.strategy_json as string ? JSON.parse(plan.strategy_json as string) : null,
+      agents: plan.agents_json as string ? JSON.parse(plan.agents_json as string) : null,
+      workflow: plan.workflow_json as string ? JSON.parse(plan.workflow_json as string) : null,
+      otioDraft: plan.otio_json as string ? JSON.parse(plan.otio_json as string) : null,
   });
 });
 
 // --- End Agent Planning Routes ---
 
 export default app;
+export { TimelineSessionDO } from './durable-objects/timeline-session';
+export { TimelineWorkflow } from './workflows/timeline';
