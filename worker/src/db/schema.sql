@@ -75,3 +75,21 @@ CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_events_project ON event_logs(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_id);
 CREATE INDEX IF NOT EXISTS idx_branches_project ON branches(project_id, updated_at DESC);
+
+-- Added for Multi-Agent Planning Phase
+CREATE TABLE IF NOT EXISTS agent_plans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    job_id TEXT REFERENCES jobs(id),
+    prompt TEXT NOT NULL,
+    status TEXT DEFAULT 'planning', -- planning, ready, executing, completed, failed
+    strategy_json TEXT, -- The overall narrative/strategy
+    agents_json TEXT, -- Selected agents and their tasks
+    workflow_json TEXT, -- The DAG/execution graph
+    otio_json TEXT, -- The generated or current OTIO draft
+    created_at INTEGER DEFAULT (unixepoch()),
+    updated_at INTEGER DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_plans_project ON agent_plans(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_plans_job ON agent_plans(job_id);

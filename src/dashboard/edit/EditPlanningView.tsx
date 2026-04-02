@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { RepoData } from '../../utils/db';
+import { apiClient } from '../../api-client';
 
 interface EditPlanningViewProps {
     prompt: string;
@@ -15,49 +16,133 @@ interface PlanItem {
     status: 'pending' | 'approved' | 'rejected';
 }
 
-const MOCK_NARRATIVE = [
-    { icon: 'bolt', title: 'Establish pace with high-energy sprint', details: "Selection: Clips tagged 'running', 'sprinting' > 0.8" },
-    { icon: 'graphic_eq', title: 'Sync brand reveal to audio drop at 00:15', details: 'Timing: Frame precise cut at beat index 42' },
-    { icon: 'filter_vintage', title: "Apply 'Urban Night' color grade", details: 'Look: High contrast, cool shadows, neon highlights' },
-];
+
 
 const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApprove, onBack }) => {
-    const [status, setStatus] = useState<'analyzing' | 'ready'>('analyzing');
+
+    const [status, setStatus] = useState<'analyzing' | 'ready' | 'failed'>('analyzing');
     const [chatInput, setChatInput] = useState("");
     const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'agent', text: string, metadata?: string }[]>([
         { role: 'user', text: prompt }
     ]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Simulate Analysis Phase
+    // Backend State
+    const [planData, setPlanData] = useState<any>(null);
+    const [currentPlanId, setCurrentPlanId] = useState<string | null>(null);
+
+    // Initial Plan Generation
     useEffect(() => {
-        const analyze = async () => {
-            await new Promise(r => setTimeout(r, 2000));
-            setChatMessages(prev => [
-                ...prev,
-                {
-                    role: 'agent',
-                    text: `I've analyzed the creative brief and raw media. Here is my proposed edit strategy for "${repo.name}".`,
-                    metadata: "Analyzing 24 clips • detecting BPM: 128 • Identifying high-motion segments..."
+        let isSubscribed = true;
+        let pollInterval: NodeJS.Timeout;
+
+        const startPlanning = async () => {
+            try {
+                // 1. Trigger the workflow
+                const response = await apiClient.generatePlan(repo.id, prompt);
+                if (isSubscribed) {
+                    setCurrentPlanId(response.planId);
                 }
-            ]);
-            setStatus('ready');
+
+                // 2. Poll for status
+                pollInterval = setInterval(async () => {
+                    try {
+                        const statusRes = await apiClient.getPlanStatus(repo.id, response.planId);
+
+                        if (statusRes.status === 'ready' || statusRes.status === 'completed') {
+                            clearInterval(pollInterval);
+                            if (isSubscribed) {
+                                setPlanData(statusRes);
+                                setStatus('ready');
+                                setChatMessages(prev => [
+                                    ...prev,
+                                    {
+                                        role: 'agent',
+                                        text: `I've analyzed the creative brief and raw media. Here is my proposed edit strategy for "${repo.name}".`,
+                                        metadata: "Analysis complete • Workflow generated"
+                                    }
+                                ]);
+                            }
+                        } else if (statusRes.status === 'failed') {
+                            clearInterval(pollInterval);
+                            if (isSubscribed) {
+                                setStatus('failed');
+                                setChatMessages(prev => [
+                                    ...prev,
+                                    {
+                                        role: 'agent',
+                                        text: `Failed to generate a plan. Please try again.`,
+                                        metadata: "Error during workflow execution"
+                                    }
+                                ]);
+                            }
+                        }
+                    } catch (pollErr) {
+                        console.error("Polling error", pollErr);
+                    }
+                }, 2000);
+
+            } catch (err) {
+                console.error("Failed to start planning workflow", err);
+                if (isSubscribed) {
+                    setStatus('failed');
+                }
+            }
         };
-        analyze();
-    }, [repo.name]);
+
+        startPlanning();
+
+        return () => {
+            isSubscribed = false;
+            if (pollInterval) clearInterval(pollInterval);
+        };
+    }, [repo.id, prompt]);
 
     // Auto-scroll chat
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [chatMessages]);
 
-    const handleSendMessage = () => {
+
+    const handleSendMessage = async () => {
         if (!chatInput.trim()) return;
-        setChatMessages(prev => [...prev, { role: 'user', text: chatInput }]);
+        const newPrompt = chatInput;
+        setChatMessages(prev => [...prev, { role: 'user', text: newPrompt }]);
         setChatInput("");
-        setTimeout(() => {
-            setChatMessages(prev => [...prev, { role: 'agent', text: "Strategy updated based on your feedback." }]);
-        }, 1000);
+        setStatus('analyzing');
+
+        try {
+            const response = await apiClient.generatePlan(repo.id, newPrompt);
+            setCurrentPlanId(response.planId);
+
+            // Poll for the new plan
+            const pollInterval = setInterval(async () => {
+                try {
+                    const statusRes = await apiClient.getPlanStatus(repo.id, response.planId);
+                    if (statusRes.status === 'ready' || statusRes.status === 'completed') {
+                        clearInterval(pollInterval);
+                        setPlanData(statusRes);
+                        setStatus('ready');
+                        setChatMessages(prev => [
+                            ...prev,
+                            { role: 'agent', text: "Strategy updated based on your feedback." }
+                        ]);
+                    } else if (statusRes.status === 'failed') {
+                        clearInterval(pollInterval);
+                        setStatus('failed');
+                        setChatMessages(prev => [
+                            ...prev,
+                            { role: 'agent', text: "Failed to update strategy." }
+                        ]);
+                    }
+                } catch (e) {
+                     console.error(e);
+                }
+            }, 2000);
+        } catch (e) {
+            console.error(e);
+            setStatus('failed');
+        }
     };
 
     return (
@@ -191,7 +276,7 @@ const EditPlanningView: React.FC<EditPlanningViewProps> = ({ prompt, repo, onApp
                                 <p className="text-slate-500 text-sm mt-1 font-mono">Proposed workflow v1.0</p>
                             </div>
                             <div className="px-3 py-1 rounded bg-primary/10 border border-primary/20 text-primary text-xs font-mono">
-                                Status: Ready for Review
+                                Status: {status === 'ready' ? 'Ready for Review' : (status === 'failed' ? 'Failed' : 'Analyzing...')}
                             </div>
                         </div>
 
