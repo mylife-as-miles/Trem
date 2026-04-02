@@ -15,91 +15,104 @@ const EDIT_TEMPLATES = [
         title: 'Auto Zoom Keyframe',
         description: 'Automatically apply smooth keyframe zooms and pans to keep subjects dynamic.',
         image: 'https://images.unsplash.com/photo-1542204165-65bf26472b9b?auto=format&fit=crop&q=80&w=400',
-        icon: 'zoom_in'
+        icon: 'zoom_in',
+        enabled: false
     },
     {
         id: 'text-behind',
         title: 'Text Behind Subject',
         description: 'Place text behind a person using AI segmentation and depth layering.',
         image: 'https://images.unsplash.com/photo-1531384441138-2736e62e0919?auto=format&fit=crop&q=80&w=400',
-        icon: 'layers'
+        icon: 'layers',
+        enabled: false
     },
     {
         id: 'motion-tracking',
         title: 'Motion Tracking Text',
         description: 'Text that follows a moving subject across the frame automatically.',
         image: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&q=80&w=400',
-        icon: 'ads_click'
+        icon: 'ads_click',
+        enabled: false
     },
     {
         id: 'kinetic-typography',
         title: 'Auto Captions / Kinetic',
         description: 'Word-by-word animated transcriptions with pop, bounce, and flash styles.',
         image: 'https://images.unsplash.com/photo-1555421689-491a97ff2040?auto=format&fit=crop&q=80&w=400',
-        icon: 'subtitles'
+        icon: 'subtitles',
+        enabled: false
     },
     {
         id: 'invisible-jump',
         title: 'Invisible Jump Cuts',
         description: 'Instant zoom in/out at cuts to add impact and retention.',
         image: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?auto=format&fit=crop&q=80&w=400',
-        icon: 'content_cut'
+        icon: 'content_cut',
+        enabled: false
     },
     {
         id: 'remove-silence',
         title: 'Remove Awkward Silences',
         description: 'Automatically detect and cut silence to keep the flow tight.',
         image: 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?auto=format&fit=crop&q=80&w=400',
-        icon: 'graphic_eq'
+        icon: 'graphic_eq',
+        enabled: false
     },
     {
         id: 'beat-sync',
         title: 'Beat-Synced Transitions',
         description: 'Align cuts, flashes, and effects to the audio rhythm automatically.',
         image: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&q=80&w=400',
-        icon: 'music_note'
+        icon: 'music_note',
+        enabled: false
     },
     {
         id: 'speed-ramping',
         title: 'Smooth Speed Ramping',
         description: 'Accelerate and decelerate clip speed for dramatic effect.',
         image: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&q=80&w=400',
-        icon: 'speed'
+        icon: 'speed',
+        enabled: true
     },
     {
         id: '3d-parallax',
         title: '3D Zoom / Parallax',
         description: 'Layered channel camera effects for depth and lens movement.',
         image: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=400',
-        icon: '3d_rotation'
+        icon: '3d_rotation',
+        enabled: false
     },
     {
         id: 'text-motion',
         title: 'Text Motion Effects',
         description: 'Slides, bounces, wiggles, and shakes triggered by word timing.',
         image: 'https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&q=80&w=400',
-        icon: 'animation'
+        icon: 'animation',
+        enabled: false
     },
     {
         id: 'visual-timers',
         title: 'Progress Bar / Timers',
         description: 'Animated bars indicating video progress for viewer retention.',
         image: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=400',
-        icon: 'hourglass_bottom'
+        icon: 'hourglass_bottom',
+        enabled: false
     },
     {
         id: 'bg-replace',
         title: 'AI Background Replace',
         description: 'Remove background without greenscreen and replace with dynamic imagery.',
         image: 'https://images.unsplash.com/photo-1508614999368-9260051292e5?auto=format&fit=crop&q=80&w=400',
-        icon: 'wallpaper'
+        icon: 'wallpaper',
+        enabled: false
     },
     {
         id: 'scratch',
         title: 'Edit From Scratch',
         description: 'Start with a blank workspace and your own creative direction.',
         image: '',
-        icon: 'add_circle'
+        icon: 'add_circle',
+        enabled: true
     }
 ];
 
@@ -137,6 +150,7 @@ const EditLandingView: React.FC<EditLandingViewProps> = ({ onSelectRepo, onSelec
     }, []);
 
     const handleCarouselSelect = (item: any) => {
+        if (item.enabled === false) return; // Downstream safety check
         onSelectTemplate(item.title);
     };
 
